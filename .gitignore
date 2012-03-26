@@ -1,0 +1,10 @@
+*-log-*
+*.bz2
+*.log
+*.sqlite
+*.sample
+*.hostname
+test/*/master/public_html/*
+test/*/master/runtests/*
+test/*/slave/runtests/*
+test/*/master/gitpoller-workdir/

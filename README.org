@@ -1,0 +1,117 @@
+* Buildbot Module helpers.
+Some libraries to help me in buildbot definitions.
+
+** Usage
+In your master configuration, put the lib directory at the level of
+your =buildbot.tac= file and add this to =buildbot.tac=:
+
+#+begin_src python
+  import sys
+  import os.path
+  
+  sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__),'..', 'lib')))
+  
+#+end_src
+
+Then in your =master.cfg= file add:
+
+#+begin_src python
+  from vagrant import *
+  from rvm import *
+    
+#+end_src
+
+See below for usage of each module.
+
+** RVM
+Ease the setup of [[http://beginrescueend.com/][RVM]] environment on the slave.
+
+In you =master.cfg= use it like this:
+
+#+begin_src python
+  rvm = Rvm(factory = factory,
+            ruby_version = '1.8.7-p302',
+            gemset = 'puppet272',
+            prefix_cmd = ['vagrant', 'ssh', 'vm-host'] # optional
+                                                       # support for
+                                                       # prefix cmd.
+                                                       # Usefull for
+                                                       # things, like
+                                                       # running it in a
+                                                       # vagrant box
+            modules = { 'puppet' : ' = 2.7.2' })
+  
+  rvm.addRVMRakeCmd(command = 'spec', workdir = 'build')
+  
+#+end_src
+
+** Vagrant
+Enable to start [[http://vagrantup.com/][vagrant]] box to run tests on the slave.  Take snapshot
+using [[https://github.com/jedi4ever/veewee-old][veewee]] to speed up the tests.  The vagrant definition should be
+under a git repository.
+
+A Vagrant object provides:
+ - addShellCmd
+ - addRevertToSnap
+ - addTakeSnap
+
+A snap is automatically taken when the box is up and is called
+'initial_state'.  It goes straight to it if it exists, so I'm
+sure to start with the same environment for each test.
+
+*** Support multi-vm vagrant environments.
+For this to work, you must setup a git repository where the
+Vagrantfile with the multiple VMs definition resides.  Then you pass
+it as property to the Vagrant object.
+
+Each vagrant object is then setup to start command on a particular
+machine inside the multi-vm environment.
+
+This example shows it all:
+#+begin_src python
+  v = Vagrant(factory = factory,
+              basedir = '/home/foo/vps/cluster',
+              machine = 'the-tester', # mutil-vm env
+              vagrantfile_source = 'git://my.project.org/project',
+              vagrantfile = 'Vagrantfile')
+#+end_src
+
+*** Support for only one standard VM
+For standard one-vm environment, you just have to specify the boxname
+and the boxurl.  Here is a example:
+
+#+begin_src python
+  v = Vagrant(factory = factory,
+              basedir = '/home/foo/vps/lucid',
+              boxname = 'vm-for-acceptance',
+              boxurl  = 'http://files.vagrantup.com/lucid32.box')
+  
+#+end_src
+
+*** Starting commands inside the Vagrant box
+Just use the =addShellCmd= method.  You can add arbitrary snapshot
+inside your buildbot factory.  Then, using the =dostep= with the
+proper lambda (as show in the following example) you can speed up the
+tests.
+
+#+begin_src python
+  v.addShellCmd(cmd = ['uname', '-a'])
+  
+  # the following three sequences of command enable to do a time
+  # consumming operation only once:
+  #  1. do the command if the snap does not exist;
+  #  2. take the snap if the snap does not exist;
+  #  3. revert to the snap
+  
+  v.addShellCmd(cmd = ['build', 'kernel', 'and','install', 'it'],
+                timeout = 3000,
+                # chech doStepIf in buildbot ShellCommand documentation
+                dostep = lambda s: s.getProperty('after_kernel') == 'FALSE')
+  
+  
+  v.addTakeSnap(snap_name = 'after_kernel') # only done if it
+                                                     # does not exist.
+  v.addRevertToSnap(snap_name = 'after_kernel')
+  v.addShellCmd(cmd = ['make', 'test-module'])
+
+#+end_src
