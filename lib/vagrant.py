@@ -10,7 +10,12 @@ from my_commands import Commands
 from buildbot.steps import shell
 from buildbot.process.properties import Property
 from buildbot.steps.shell import ShellCommand
+# the new version offers more choice for git, like keeping file from
+# gitignore.
 from buildbot.steps.source.git import Git
+# Try schedule does not work with the new git module
+# version 0.8.5 12/21/04
+from buildbot.steps.source import Git as GitOld
 from buildbot.steps.transfer import StringDownload
 
 VAGRANT_VERSION='1.0.2'
@@ -91,7 +96,7 @@ class VagrantCmds(Commands):
 class Vagrant:
     def __init__(self, factory='', basedir='', machine='', vagrantfile_source='',vagrantfile='Vagrantfile', boxname='', boxurl='',want_init_snap_named='__is_not_a_name', vm = False, fix_network = False):
         self.factory=factory
-        self.basedir=basedir
+        self.basedir=os.path.expanduser(basedir)
         self.machine=machine
         self.vagrantfile_source=vagrantfile_source
         self.vagrantfile=path.join(self.basedir, vagrantfile)
@@ -219,10 +224,13 @@ class Vagrant:
                          descriptionDone = 'Snap Deleted' + snap_name,
                          property_name = snap_name)
         
-    def addRevertToSnap(self, snap_name='____non_exististing_snap'):
+    def addRevertToSnap(self, snap_name='____non_exististing_snap', assume_exists = False):
         cmd = self.vagrant_cmd.snap('go',snap_name)
+        t_or_f = 'TRUE'
+        if assume_exists:
+            t_or_f = 'FALSE'
         self.doCommandIf(cmd = cmd,
-                         true_or_false = 'TRUE',
+                         true_or_false = t_or_f,
                          description = 'Reverting',
                          descriptionDone = 'Revert to ' + snap_name,
                          property_name = snap_name)
@@ -252,6 +260,22 @@ class Vagrant:
                          property_name = snap_name,
                          description = 'Snapping',
                          descriptionDone = 'Snapped')
+
+    def addUploadGitDir(self, repo_url = '', dest_dir = '', mode='copy'):
+        """ Presume that the it's the main git repository """
+        self.factory.addStep(GitOld(repourl=repo_url, mode=mode))
+        self.factory.addStep(ShellCommand(
+                command = ['cp','-a','../build', self.basedir],
+                description = 'Making repo available.',
+                descriptionDone = 'Repo available',))
+        self.addShellCmd(
+                cmd = ['rm','-rf', dest_dir, '&&',
+                           'mkdir', '-p', dest_dir, '&&', 
+                           'cp', '-a','/vagrant/build/*', dest_dir],
+                running = 'Cping Repo in dest dir.',
+                done    = 'Cp Repo in dest dir.')
+                
+
 
     def goto_or_take_snap(self, snap):
         self.factory.addStep(shell.SetProperty(
