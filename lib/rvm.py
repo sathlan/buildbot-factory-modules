@@ -1,6 +1,8 @@
 from os import *
 from my_commands import Commands
 
+from base import Base
+
 from buildbot.steps import shell
 from buildbot.process.properties import Property
 from buildbot.steps.transfer import StringDownload
@@ -37,7 +39,7 @@ class RvmCommands(Commands):
                            '--conservative', '--no-ri', '--no-rdoc']+args)
         return cmd
 
-class Rvm:
+class Rvm(Base):
     def __init__(self, factory='', ruby_version='1.8.7-p302', gemset='', modules={}, vm=False):
         self.factory = factory
         self.ruby_version = ruby_version
@@ -46,6 +48,7 @@ class Rvm:
         self.vm = vm
         self.ruby_version_base = '1.8.7-p302' # default debian version.
         self.rvmcommands = RvmCommands(ruby_version=ruby_version, gemset=gemset, vm = vm)
+        Base.__init__(self, self.rvmcommands)
 
     def start(self,quick = False):
         property_name = self.ruby_version + '@' +self.gemset

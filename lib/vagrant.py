@@ -5,18 +5,22 @@ from os import *
 import os.path
 import string
 
+from vm   import Vm
+
 from my_commands import Commands
 
 from buildbot.steps import shell
 from buildbot.process.properties import Property
 from buildbot.steps.shell import ShellCommand
-# the new version offers more choice for git, like keeping file from
-# gitignore.
-from buildbot.steps.source.git import Git
 # Try schedule does not work with the new git module
 # version 0.8.5 12/21/04
 from buildbot.steps.source import Git as GitOld
+# the new version offers more choice for git, like keeping file from
+# gitignore.
+from buildbot.steps.source.git import Git
 from buildbot.steps.transfer import StringDownload
+
+from buildbot.process.properties import WithProperties
 
 VAGRANT_VERSION='1.0.2'
 VAGRANT_SNAP_VERSION='0.10'
@@ -93,25 +97,30 @@ class VagrantCmds(Commands):
             grep + '\' && echo TRUE ) || echo FALSE'
         return self.simple([ 'bash', '-c', str_cmd ])
         
-class Vagrant:
-    def __init__(self, factory='', basedir='', machine='', vagrantfile_source='',vagrantfile='Vagrantfile', boxname='', boxurl='',want_init_snap_named='__is_not_a_name', vm = False, fix_network = False):
-        self.factory=factory
+class Vagrant(Vm):
+    def __init__(self, 
+                 basedir='', 
+                 machine='', 
+                 vagrantfile_source='',
+                 vagrantfile='Vagrantfile', 
+                 boxname='', 
+                 boxurl='',
+                 fix_network = False,
+                 **kwds):
+
         self.basedir=os.path.expanduser(basedir)
+        # MRO should kick in both Vm, and Base, and I should use new style class:
+        # http://www.python.org/doc/newstyle/
+        Vm.__init__(self, root_vm_dir = self.basedir, commands_class = VagrantCmds, **kwds)
+        self.vagrant_cmd = self.commands
         self.machine=machine
         self.vagrantfile_source=vagrantfile_source
         self.vagrantfile=path.join(self.basedir, vagrantfile)
         self.boxname=boxname
         self.boxurl= boxurl
-        self.vm = vm
-        self.pre_commands_hook=[]
         self.fix_network = fix_network
-        self.do_pre_commands_if = True
-        self.want_init_snap_named=want_init_snap_named
-        if want_init_snap_named == '__is_not_a_name':
-            self.want_init_snap_named = 'initial_state-vm'+self.make_uniq_initial_name()
         if self.want_init_snap_named:
             print 'DEBUG: initial_state is ' + self.want_init_snap_named
-        self.vagrant_cmd = VagrantCmds(machine = machine, vm = vm, basedir = self.basedir)
 
     def init_snap(self, name=''):
         self.want_init_snap_named = name
@@ -260,22 +269,19 @@ class Vagrant:
                          property_name = snap_name,
                          description = 'Snapping',
                          descriptionDone = 'Snapped')
-
-    def addUploadGitDir(self, repo_url = '', dest_dir = '', mode='copy'):
-        """ Presume that the it's the main git repository """
-        self.factory.addStep(GitOld(repourl=repo_url, mode=mode))
+    def addUploadDirectory(self, src_dir, dst_dir):
+        """ Must be provided to upload a dir to the vm """
+        dir_in_vm = '/upload/'+ dst_dir
+        # TODO: make the dir name unique, see next TODO
+        tmp_dir = self.basedir + dir_in_vm
+        # TODO: WithProperties %(buildername)s-%(buildnumber)s' may work.
+        # To upload I just copy to the root vagrant dir as it is shared
+        self.addCpDirectory(src_dir + '/', tmp_dir)
         self.factory.addStep(ShellCommand(
-                command = ['cp','-a','../build', self.basedir],
-                description = 'Making repo available.',
-                descriptionDone = 'Repo available',))
-        self.addShellCmd(
-                cmd = ['rm','-rf', dest_dir, '&&',
-                           'mkdir', '-p', dest_dir, '&&', 
-                           'cp', '-a','/vagrant/build/*', dest_dir],
-                running = 'Cping Repo in dest dir.',
-                done    = 'Cp Repo in dest dir.')
-                
-
+                command = self.vagrant_cmd.ssh(['cp','-a', '/vagrant' + dir_in_vm + '/', dst_dir]),
+                description = 'Uploading',
+                descriptionDone = 'Uploaded'))
+        return dst_dir
 
     def goto_or_take_snap(self, snap):
         self.factory.addStep(shell.SetProperty(
