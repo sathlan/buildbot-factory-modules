@@ -1,12 +1,16 @@
 import string
 
 class Commands():
-    def __init__(self, vm = False):
+    def __init__(self, vm = None):
         self.vm = vm
+        if vm:
+            self.run_on_vm = True
+        else:
+            self.run_on_vm = False
 
     def basic(self, cmd=[]):
         print "BASIC START: " + ' '.join(cmd)
-        if self.vm:
+        if self.run_on_vm:
             command = self.vm.command_prefix(cmd)
         else:
             command = self.myquote(cmd, -1)

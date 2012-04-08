@@ -12,13 +12,6 @@ from my_commands import Commands
 from buildbot.steps import shell
 from buildbot.process.properties import Property
 from buildbot.steps.shell import ShellCommand
-# Try schedule does not work with the new git module
-# version 0.8.5 12/21/04
-from buildbot.steps.source import Git as GitOld
-# the new version offers more choice for git, like keeping file from
-# gitignore.
-from buildbot.steps.source.git import Git
-from buildbot.steps.transfer import StringDownload
 
 from buildbot.process.properties import WithProperties
 
@@ -26,19 +19,20 @@ VAGRANT_VERSION='1.0.2'
 VAGRANT_SNAP_VERSION='0.10'
 
 class VagrantCmds(Commands):
-    def __init__(self, machine = '', basedir = '/', vm = False):
+    def __init__(self, machine = '', basedir = '/', vm = None):
         Commands.__init__(self, vm)
         self.machine = machine
         self.basedir = basedir
 
-    def simple(self, cmd=[]):
+    def simple(self, cmd=[], workdir = None):
+        """ Execute command on socle, taking care of undelying vm. """
         print "DEBUG: SIMPLE -> " + ' '.join(cmd)
         snap_command = False
         if string.find(' '.join(cmd), ' snap ') >= 0:
             snap_command = True
         # snapping inside a VM seems to not work, so we snap the
         # "root" vm.
-        if snap_command and self.vm:
+        if snap_command and self.run_on_vm:
             command = self.basic(cmd)       # command_prefix will fill
                                             # in the father prefix
                                             # command
@@ -47,6 +41,7 @@ class VagrantCmds(Commands):
         return command
 
     def ssh(self, cmd=[]):
+        """ Execute command on the vz, taking care of undelying vm. """
         print "DEBUG: SSH"
         command = ['vagrant', 'ssh']
         if self.machine:
@@ -55,6 +50,7 @@ class VagrantCmds(Commands):
         return self.simple(command + [' '.join(cmd)])
 
     def snap(self, command = '', snap=''):
+        """ Command on the socle. """
         cmd = ['vagrant', 'snap', command]
         if command == 'take':
             if self.machine:
@@ -70,32 +66,36 @@ class VagrantCmds(Commands):
         return self.simple(cmd)
         
     def up(self):
+        """ Command on the socle. """
         cmd = ['vagrant', 'up']
         if self.machine:
             cmd += [ self.machine ]
         return self.simple(cmd)
 
     def init(self, boxname, boxurl = False):
+        """ Command on the socle. """
         cmd = ['vagrant', 'init', boxname]
         if boxurl:
             cmd += [boxurl]
         return self.simple(cmd)
 
     def snap_exists(self, snap = ''):
+        """ Raw Command on the socle for property testing. """
         cmd = self.__make_vagrant_output_test(['snap', 'list'], snap)
         return cmd
 
     def vm_is_running(self):
+        """ Raw Command on the socle for property testing. """
         cmd = self.__make_vagrant_output_test(['status'], 'running')
         return cmd
 
     def __make_vagrant_output_test(self, cmd = [], grep= '_does_not_existssss'):
-        command = [ 'vagrant' ] + cmd
+        """ Raw Command on the socle for property testing. """
+        cmd_prefix = [ 'vagrant' ] + cmd
         if self.machine:
-            command += [ self.machine ]
-        str_cmd = '( ' + ' '.join(command) + ' 2>/dev/null | egrep -q \'' +\
-            grep + '\' && echo TRUE ) || echo FALSE'
-        return self.simple([ 'bash', '-c', str_cmd ])
+            cmd_prefix += [ self.machine ]
+        command = [' '.join(cmd_prefix) + ' 2>/dev/null | egrep -q ' + grep]
+        return command
         
 class Vagrant(Vm):
     def __init__(self, 
@@ -103,7 +103,7 @@ class Vagrant(Vm):
                  machine='', 
                  vagrantfile_source='',
                  vagrantfile='Vagrantfile', 
-                 boxname='', 
+                 boxname='',
                  boxurl='',
                  fix_network = False,
                  **kwds):
@@ -116,159 +116,14 @@ class Vagrant(Vm):
         self.machine=machine
         self.vagrantfile_source=vagrantfile_source
         self.vagrantfile=path.join(self.basedir, vagrantfile)
-        self.boxname=boxname
         self.boxurl= boxurl
+        self.name = 'VAGRANT' + self.make_uniq_initial_name()
         self.fix_network = fix_network
-        if self.want_init_snap_named:
-            print 'DEBUG: initial_state is ' + self.want_init_snap_named
+        self.can_snap = True
+        # The root VM should snap
+        if self.run_on_vm:
+            self.can_snap = False
 
-    def init_snap(self, name=''):
-        self.want_init_snap_named = name
-
-    def add_pre_command(self, commands=[]):
-        for cmd in commands:
-            self.pre_commands_hook.append(cmd)
-
-    def addShellCmd(self, cmd=[], running = 'Running', done='Done', timeout=1200, dostep=True):
-        command = self.vagrant_cmd.ssh(cmd)
-        self.factory.addStep(ShellCommand(
-                command = command,
-                description = running,
-                descriptionDone = done,
-                timeout = timeout,
-                doStepIf = dostep,
-                ))
-
-    def start(self):
-        property_name = self.want_init_snap_named
-        if self.vm:
-            self.vm.start()
-        self.try_install_virtualbox()
-        self.factory.addStep(ShellCommand(
-                command=self.vagrant_cmd.simple(
-                    ['gem', 'list', '-i vagrant -v', "'"+VAGRANT_VERSION+"'", '||',
-                     'sudo', 'gem', 'install vagrant -v', "'"+VAGRANT_VERSION+"'"]),
-                description='Installing Vagrant',
-                descriptionDone='Vagrant installed',))
-        if not self.vm:
-            # snapping inside a VM seems to not work and does not make
-            # much sense.  We snap at the "root" vm seems to be missing
-            # (for snap maybe)
-            self.factory.addStep(ShellCommand(
-                    command=self.vagrant_cmd.simple(
-                        ['gem', 'list', '-i virtualbox', '||',
-                         'sudo', 'gem', 'install', 'virtualbox']),
-                    description='Installing virtualbox',
-                    descriptionDone='Vagrantbox installed',))
-            self.factory.addStep(ShellCommand(
-                    command=self.vagrant_cmd.simple(
-                        ['gem', 'list', '-i vagrant-snap -v', "'"+VAGRANT_SNAP_VERSION+"'", '||',
-                         'sudo', 'gem', 'install vagrant-snap -v', "'"+VAGRANT_SNAP_VERSION+"'"]),
-                    description='Installing Vagrant Snap',
-                    descriptionDone='Vagrant-snap installed',))
-                    
-        self.factory.addStep(shell.SetProperty(
-                command=self.vagrant_cmd.simple(['bash','-c','([ -e ' + self.vagrantfile + ' ] && echo TRUE) || echo FALSE']),
-                description='Setting property',
-                property='vagrant_is_installed'))
-
-        self.factory.addStep(ShellCommand(
-                command = self.vagrant_cmd.simple(['mkdir', '-p', self.basedir]),
-                description = 'Creating base dir',
-                descriptionDone = 'Dir created',
-                doStepIf = lambda s: s.getProperty('vagrant_is_installed') == 'FALSE'))
-        self.factory.addStep(shell.SetProperty(
-                command=self.vagrant_cmd.vm_is_running(),
-                description='Setting property',
-                property='machine_is_running'))
-        if self.vagrantfile_source:
-            # if the '.vagrant' file is not in the .gitignore it will
-            # be deleted, so it must be added (manually)
-            self.factory.addStep(Git(repourl=self.vagrantfile_source,
-                                     mode='full',
-                                     method='clean',
-                                     description='Checking out Vagrant',
-                                     descriptionDone='Vagrant checked out',
-                                     ))
-        elif self.boxname:
-            self.factory.addStep(ShellCommand(
-                    description='Initializing Vagrant',
-                    descriptionDone='Vagrant initialized',
-                    doStepIf = lambda s: s.getProperty('vagrant_is_installed') == 'FALSE',
-                    command = self.vagrant_cmd.init(self.boxname,self.boxurl)))
-
-        cmd = self.vagrant_cmd.up()
-        self.factory.addStep(ShellCommand(
-                description='Starting VBox',
-                descriptionDone='VBox up',
-                command = cmd,
-                doStepIf = lambda s: s.getProperty('machine_is_running') == 'FALSE',
-                ))
-    # used by the next step
-        if self.want_init_snap_named:
-            self.addTakeSnap('initial_state-vm'+self.make_uniq_initial_name()) # father of all snaps
-            self.factory.addStep(shell.SetProperty(
-                    command=self.vagrant_cmd.snap_exists(self.want_init_snap_named),
-                    description='Setting property',
-                    property=self.want_init_snap_named))
-
-        if self.fix_network:
-            self.addShellCmd(['sudo', 'dhclient', 'eth0'],running = 'Fixing Net', done = 'Network Fixed')
-        # http://www.python.org/dev/peps/pep-0322/
-        while self.pre_commands_hook:
-            command = self.pre_commands_hook.pop()
-            self.addShellCmd(command, running = 'Running Pre-Hook', done='Pre-Hook',
-                             dostep = lambda s,n=self.want_init_snap_named: s.getProperty(n, 'FALSE') == 'FALSE')
-
-        if self.want_init_snap_named:
-            self.addRevertToSnap(self.want_init_snap_named)
-            if self.fix_network:
-                self.addShellCmd(['sudo', 'dhclient', 'eth0'],running = 'Fixing Net', done = 'Network Fixed',dostep = lambda s,n=self.want_init_snap_named: s.getProperty(n, 'FALSE') == 'TRUE')
-
-    def addDeleteSnap(self, snap_name='____non_exististing_snap'):
-        cmd = self.vagrant_cmd.snap('delete',snap_name)
-        self.doCommandIf(cmd = cmd,
-                         true_or_false = 'TRUE',
-                         description = 'Deleting Snap',
-                         descriptionDone = 'Snap Deleted' + snap_name,
-                         property_name = snap_name)
-        
-    def addRevertToSnap(self, snap_name='____non_exististing_snap', assume_exists = False):
-        cmd = self.vagrant_cmd.snap('go',snap_name)
-        t_or_f = 'TRUE'
-        if assume_exists:
-            t_or_f = 'FALSE'
-        self.doCommandIf(cmd = cmd,
-                         true_or_false = t_or_f,
-                         description = 'Reverting',
-                         descriptionDone = 'Revert to ' + snap_name,
-                         property_name = snap_name)
-
-    def doCommandIf(self, cmd = [], true_or_false = 'FALSE',
-                    property_name = '', **kwargs):
-
-        description = 'Running Maybe'
-        descriptionDone = 'Done Maybe'
-        if 'description' in kwargs:
-            description = kwargs['description']
-        if 'descriptionDone' in kwargs:
-            descriptionDone = kwargs['descriptionDone']
-        check = lambda s, name=property_name,tf=true_or_false: \
-            s.getProperty(name,'FALSE') == tf
-        self.factory.addStep(ShellCommand(
-                command = cmd,
-                description = description,
-                descriptionDone = descriptionDone,
-                doStepIf = check
-                ))
-        
-        
-    def addTakeSnap(self, snap_name='____non_exististing_snap'):
-        self.doCommandIf(cmd = self.vagrant_cmd.snap('take', snap_name),
-                         true_or_false = 'FALSE',
-                         property_name = snap_name,
-                         description = 'Snapping',
-                         descriptionDone = 'Snapped')
     def addUploadDirectory(self, src_dir, dst_dir):
         """ Must be provided to upload a dir to the vm """
         dir_in_vm = '/upload/'+ dst_dir
@@ -283,23 +138,47 @@ class Vagrant(Vm):
                 descriptionDone = 'Uploaded'))
         return dst_dir
 
-    def goto_or_take_snap(self, snap):
-        self.factory.addStep(shell.SetProperty(
-                command=self.vagrant_cmd.snap_exists(snap),
-                description='Setting property',
-                property=snap))
-        self.addTakeSnap(snap)
-        self.addRevertToSnap(snap)
-        
+    def addUploadFileFromSocle(self, src_file, dst_file, workdir = '/', on_socle = False):
+        dst_file_rel = dst_file
+        workdir_rel  = workdir
+
+        if os.path.isabs(dst_file):
+            dst_file_rel = os.path.relpath(dst_file,'/')
+        if os.path.isabs(workdir):
+            workdir_rel = os.path.relpath(workdir,'/')
+            
+        dst = os.path.join('/',workdir_rel, dst_file_rel)
+        file_in_vm = os.path.join('upload', dst_file_rel)
+        tmp_file   = os.path.join(self.basedir, file_in_vm)
+        file_in_vm_on_share = os.path.join('/vagrant',file_in_vm)
+        if on_socle:
+            self.addCpFile(src_file, dst_file)
+            return dst_file
+
+        self.addCpFile(src_file, tmp_file)
+        self.addShellCmdInVm(command = ['bash', '-c','mkdir', '-p',
+                                        os.path.dirname(dst), '&&',
+                                        'cp', '-f', file_in_vm_on_share, dst],
+                             description = 'Uploading file.',
+                             descriptionDone    = 'File uploaded')
+        return dst_file
+
+    def add_pre_command(self, commands=[]):
+        for cmd in commands:
+            self.pre_commands_hook.append(cmd)
+
     def command_prefix(self, cmd = []):
         if string.find(' '.join(cmd), ' snap ') >= 0:
             return self.vagrant_cmd.simple(cmd)
         return self.vagrant_cmd.ssh(cmd)
 
-    def try_install_virtualbox(self):
-        dest_script_file = os.path.join(self.basedir, 'install-virtualbox.sh')
-        self.factory.addStep(StringDownload(
-"""
+    # TODO : need to support more os
+    def install_packages(self):
+        self.addSetPropertyTF(command = ["facter operatingsystem | egrep -q 'Ubuntu|Debian'"],
+                              property = 'IS_DEBIAN')
+
+        dest_script_file = '/tmp/install-virtualbox.sh'
+        dest_script_file_content = """
 #!/usr/bin/env bash
 
 if [ -z "`which VBoxManage`" ]; then
@@ -319,19 +198,34 @@ if [ -z "`which VBoxManage`" ]; then
         exit 2
     fi
 fi
-""",  slavedest=dest_script_file))
-        if self.vm:
-            self.factory.addStep(ShellCommand(
-                command = self.vagrant_cmd.simple(['cp', os.path.join('/','vagrant','install-virtualbox.sh'),
-                                                   dest_script_file ]),
-                description = 'Installing Script',
-                descriptionDone = 'Script Installed',))
-                             
-        self.factory.addStep(ShellCommand(
-                command = self.vagrant_cmd.simple(['bash', dest_script_file]),
+"""
+        self.addUploadFile(src_file = dest_script_file_content,
+                           dst_file = dest_script_file)
+        self.addCommandIf(
+                command = self.commands.simple(['bash', dest_script_file]),
+                property_name = 'IS_DEBIAN',
+                true_or_false = 'TRUE',
                 workdir = 'build',
                 description = 'Installing VirtualBox',
-                descriptionDone = 'VirtualBox Done'))
+                descriptionDone = 'VirtualBox Done')
+
+        self.addShellCmd(
+            command = ['gem', 'list', '-i vagrant -v', "'"+VAGRANT_VERSION+"'", '||',
+                      'sudo', 'gem', 'install vagrant -v', "'"+VAGRANT_VERSION+"'"],
+            description='Installing Vagrant',
+            descriptionDone='Vagrant installed')
+
+    def install_snap(self):
+        self.addShellCmd(
+            command = ['gem', 'list', '-i virtualbox', '||',
+                       'sudo', 'gem', 'install', 'virtualbox'],
+            description='Installing VB for '+self.name ,
+            descriptionDone='virtualbox '+self.name,)
+        self.addShellCmd(
+                command= ['gem', 'list', '-i vagrant-snap -v', "'"+VAGRANT_SNAP_VERSION+"'", '||',
+                          'sudo', 'gem', 'install vagrant-snap -v', "'"+VAGRANT_SNAP_VERSION+"'"],
+                description='Installing Snap for ' + self.name,
+                descriptionDone='Snap installed for' + self.name)
 
     def make_uniq_initial_name(self):
         vm = self.vm
@@ -341,3 +235,45 @@ fi
             counter += 1
         return str(counter)
 
+    def fix_net(self):
+        self.addShellCmdInVm(command = ['sudo', 'dhclient', 'eth0'],
+                             description = 'Fixing Net',
+                             descriptionDone = 'Network Fixed')
+        
+    def install_vm(self):
+        self.addSetPropertyTF(
+                command=['[ -e ' + self.vagrantfile + ' ]'],
+                description='Setting property',
+                property=self.name+'_is_installed')
+
+        self.addCommandIf(
+                command = ['mkdir', '-p', self.basedir],
+                description = 'Creating base dir',
+                descriptionDone = 'Dir created',
+                property_name = self.name+'_is_installed')
+
+        self.addSetPropertySimpleTF(
+                command=self.commands.vm_is_running(),
+                description='Setting property',
+                property=self.name+'_is_running')
+
+        if self.vagrantfile_source:
+            # if the '.vagrant' file is not in the .gitignore it will
+            # be deleted, so it must be added (manually)
+            self.addUploadGitDir(rep_ourl = self.vagrantfile_source,
+                                 dest_dir = self.basedir,
+                                 use_new = True)
+        elif self.boxname:
+            self.addCommandIf(
+                    description='Initializing '+self.name,
+                    descriptionDone=self.name + ' initialized',
+                    property_name = self.name+'_is_installed',
+                    command = self.vagrant_cmd.init(self.boxname,self.boxurl))
+
+    def start_vm(self):
+        cmd = self.vagrant_cmd.up()
+        self.addCommandIf(
+                description='Starting '+self.name,
+                descriptionDone=self.name + ' up',
+                command = cmd,
+                doStepIf = self.name+'_is_running')

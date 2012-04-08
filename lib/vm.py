@@ -23,65 +23,68 @@ from buildbot.steps.transfer import StringDownload
 class Vm(Base):
     def __init__(self, 
                  factory = '',
-                 want_init_snap_named='__is_not_a_name',
-                 vm = False,
+                 want_init_snap = True,
+                 init_snap_name = '',
+                 vm = None,
                  root_vm_dir = '',
                  commands_class = '',
                  machine = False,
+                 boxname = 'default',
                  ):
-        Base.__init__(self, commands = commands_class(machine = machine, basedir = self.basedir, vm = vm))
+        Base.__init__(self, commands = \
+                          commands_class(machine = machine, basedir = self.basedir, vm = vm),
+                      vm = vm)
         cmds = commands_class(machine = machine, vm = vm, basedir = self.basedir)
+        self.boxname = boxname
         self.factory=factory
         self.vm = vm
+        self.is_vm = True
         self.pre_commands_hook = []
-        if want_init_snap_named == '__is_not_a_name':
-            self.want_init_snap_named = 'initial_state-vm'+self.make_uniq_initial_name()
-        self.want_init_snap_named = want_init_snap_named
+        if want_init_snap:
+            if not init_snap_name:
+                self.want_init_snap_named = self.make_uniq_initial_name()
         self.root_vm_dir = root_vm_dir
 
     def addUploadDirectory(self, src_dir, dst_dir):
         raise MyFactoryError("MyFactoryError must be provided to be able to upload to the VM")
 
-    def addShellCmd(self, src_dir, dst_dir):
-        raise MyFactoryError("addShellCmd must be provided to be able to exec on the VM")
+    def addTakeSnap(self, snap_name='____non_exististing_snap'):
+        self.addCommandIf(command = self.commands.snap('take', snap_name),
+                         true_or_false = 'FALSE',
+                         property_name = snap_name,
+                         description = 'Snapping',
+                         descriptionDone = 'Snapped')
 
-    def start(self):
-        if self.can_snap:
-            property_name = self.want_init_snap_named
+    def addRevertToSnap(self, snap_name='____non_exististing_snap', assume_exists = False):
+        cmd = self.commands.snap('go',snap_name)
+        t_or_f = 'TRUE'
+        if assume_exists:
+            t_or_f = 'FALSE'
+        self.addCommandIf(command = cmd,
+                         true_or_false = t_or_f,
+                         description = 'Reverting',
+                         descriptionDone = 'Revert to ' + snap_name,
+                         property_name = snap_name)
 
-        if self.vm:
-            self.vm.start()
+    def addDeleteSnap(self, snap_name='____non_exististing_snap'):
+        cmd = self.commands.snap('delete',snap_name)
+        self.addCommandIf(command = cmd,
+                         true_or_false = 'TRUE',
+                         description = 'Deleting Snap',
+                         descriptionDone = 'Snap Deleted' + snap_name,
+                         property_name = snap_name)
+        
+    def addTakeSnap(self, snap_name='____non_exististing_snap'):
+        self.addCommandIf(command = self.commands.snap('take', snap_name),
+                         true_or_false = 'FALSE',
+                         property_name = snap_name,
+                         description = 'Snapping',
+                         descriptionDone = 'Snapped')
 
-        self.install_packages()
-        self.install_vm()
+    def addShellCmdInVm(self, command=[], **kwargs):
+        cmd = self.commands.ssh(command)
+        self.addShellCmdBasic(command = cmd, **kwargs)
 
-        if self.can_snap:
-            self.install_snap()
-
-        self.start_vm()
-
-        if self.can_snap:
-            if self.want_init_snap_named:
-                self.addTakeSnap('initial_state-vm'+self.make_uniq_initial_name()) # father of all snaps
-                self.factory.addStep(shell.SetProperty(
-                        command=self.vagrant_cmd.snap_exists(self.want_init_snap_named),
-                        description='Setting property',
-                        property=self.want_init_snap_named))
-
-
-        if self.fix_network:
-            self.fix_net()
-
-        # http://www.python.org/dev/peps/pep-0322/
-        while self.pre_commands_hook:
-            command = self.pre_commands_hook.pop()
-            self.addShellCmd(command, running = 'Running Pre-Hook', done='Pre-Hook',
-                             dostep = lambda s,n=self.want_init_snap_named: s.getProperty(n, 'FALSE') == 'FALSE')
-
-        if self.want_init_snap_named:
-            self.addRevertToSnap(self.want_init_snap_named)
-            if self.fix_network:
-                self.fix_net
 
     def make_uniq_initial_name(self):
         vm = self.vm
@@ -89,7 +92,7 @@ class Vm(Base):
         while vm:
             vm = vm.vm
             counter += 1
-        return str(counter)
+        return self.boxname + '-' + str(counter)
 
-
-
+    def init_snap(self, name=''):
+        self.init_snap_name = name
