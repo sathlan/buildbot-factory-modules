@@ -28,7 +28,7 @@ except ImportError:
   pass
 
 buildmaster_host = 'localhost'
-port = 9989
+port = 9990
 slavename = 'example-slave'
 passwd = 'pass'
 keepalive = 600
