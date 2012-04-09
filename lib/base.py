@@ -82,6 +82,7 @@ class Base():
                                   steps    = this_step)
         else:
             # "root" vm
+            last = len(this_step)
             dst_file_rel = dst_file
             workdir_rel  = workdir
             if os.path.isabs(workdir):
@@ -91,17 +92,27 @@ class Base():
             # workdir and all are for the final vm, here we assure
             # that the final file will be in 'build/<workdir>/<dst_file>
             dst_file_rel = os.path.join(workdir_rel, dst_file_rel)
+            # when only one step the hardware node is the final destination.
+            if last == 1:
+                dst_file_rel = os.path.join('/', dst_file_rel)
             if not os.path.exists(src_file):
                 self.factory.addStep(StringDownload(s         = src_file,
                                                     slavedest = dst_file_rel))
             else:
                 self.factory.addStep(FileDownload(mastersrc = src_file,
                                                   slavedest = dst_file_rel))
+            if last == 1:
+                # only one step, do it on hardware node, pretty lame,
+                # user should (String|File)Download module
+                # directly. Add it for the shake of interface
+                # homogeneity
+                return dst_file_rel
             # now I deleguate the "upload" to each vm.
             iter_file = False
-            last = len(this_step)
             cmpt = 1
             for step in this_step:
+                if not self.is_vm: # only work with vm
+                    next
                 final_dst = '/tmp'+ dst_file
                 if cmpt == last:
                     final_dst = dst_file
@@ -117,20 +128,28 @@ class Base():
         this_step = [self] + steps
         if self.run_on_vm:
             self.vm.addDownloadGitDir(repo_url = repo_url,
-                                    dest_dir = dest_dir,
-                                    mode = mode,
-                                    use_new = use_new,
-                                    steps = this_step)
+                                      dest_dir = dest_dir,
+                                      mode = mode,
+                                      use_new = use_new,
+                                      steps = this_step)
         else:
             # the Try module does not work with the new Git module 0.8.5
             if use_new:
                 self.factory.addStep(Git(repourl=repo_url, mode='full', method='clean'))
             else:
                 self.factory.addStep(GitOld(repourl=repo_url, mode=mode))
-            iter_dir = False
             last = len(this_step)
+            if last == 1:
+                # only one step, do it on hardware node, pretty
+                # useless, user should Git module directly. Add it for
+                # the shake of interface homogeneity
+                self.addCpDirectory('../build', dest_dir)
+                return dest_dir
+            iter_dir = False
             cmpt = 1
             for step in this_step:
+                if not self.is_vm:
+                    next
                 final_dst = '/tmp'+ dest_dir
                 if cmpt == last:
                     final_dst = dest_dir
