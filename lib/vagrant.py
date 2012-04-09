@@ -229,7 +229,7 @@ fi
                 ['gem', 'list', '-i vagrant-snap -v', "'"+VAGRANT_SNAP_VERSION+"'", '||',
                  'sudo', 'gem', 'install vagrant-snap -v', "'"+VAGRANT_SNAP_VERSION+"'"]),
                 description='Installing Snap for ' + self.name,
-                descriptionDone='Snap installed for' + self.name)
+                descriptionDone='Snap installed for ' + self.name)
 
     def make_uniq_initial_name(self):
         vm = self.vm
