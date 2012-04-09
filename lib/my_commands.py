@@ -8,26 +8,24 @@ class Commands():
         else:
             self.run_on_vm = False
 
+    def with_bash(self, cmd):
+        return ['bash', '-c', ' '.join(cmd)]
+
     def basic(self, cmd=[]):
-        print "BASIC START: " + ' '.join(cmd)
         if self.run_on_vm:
             command = self.vm.command_prefix(cmd)
         else:
             command = self.myquote(cmd, -1)
-        print "BASIC: " + ' '.join(command)
         return command
 
     def subquote(self, cmd_str, level):
-        print "SUBQUOTE: " + cmd_str + ' level ' + str(level)
         bash_idx = 0
         vagrant_idx = 0
         bash_idx = string.find(cmd_str,'bash -c')
         vagrant_idx = string.find(cmd_str, 'vagrant ssh -c')
-        print "  BIDX: " +str(bash_idx) + ' VIDX: '+str(vagrant_idx)
         spliter = ''
         prefix = []
         if vagrant_idx == -1 and bash_idx == -1:
-            print "  RETURN(-1): " + cmd_str 
             return cmd_str
         elif (bash_idx < vagrant_idx or vagrant_idx == -1) and bash_idx != -1:
             spliter = 'bash -c'
@@ -36,13 +34,10 @@ class Commands():
             spliter = 'vagrant ssh -c'
             prefix = ['vagrant', 'ssh', '-c']
         else:
-            print "  RETURN: " + cmd_str
             return cmd_str
 
         to_be_quoted = prefix + [cmd_str.partition(spliter)[-1]]
         to_be_prepend = cmd_str.partition(spliter)[0]
-        print "   QUOTED : (" + spliter + ') ' +' '.join(to_be_quoted)
-        print "   PREPEND: " + to_be_prepend
         cmd_str = to_be_prepend + ' '.join(self.myquote(to_be_quoted,level))
         return cmd_str
 
@@ -87,5 +82,4 @@ class Commands():
                 new_cmd.append(element)
             else:
                 new_cmd.append(element)
-        print "RTNX: " + ' '.join(new_cmd)
         return new_cmd

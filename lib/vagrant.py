@@ -24,20 +24,18 @@ class VagrantCmds(Commands):
         self.machine = machine
         self.basedir = basedir
 
+    def around_command(self, cmd=[], workdir = None):
+        """ Helper command """
+        command =  (['bash', '-c', ' '.join([ "([ -d '" + self.basedir + \
+                                                  "' ] || mkdir -p '" + self.basedir+ \
+                                                  "') && cd '" + \
+                                                  self.basedir+"' && "] + \
+                                                  cmd)])
+        return command
+
     def simple(self, cmd=[], workdir = None):
         """ Execute command on socle, taking care of undelying vm. """
-        print "DEBUG: SIMPLE -> " + ' '.join(cmd)
-        snap_command = False
-        if string.find(' '.join(cmd), ' snap ') >= 0:
-            snap_command = True
-        # snapping inside a VM seems to not work, so we snap the
-        # "root" vm.
-        if snap_command and self.run_on_vm:
-            command = self.basic(cmd)       # command_prefix will fill
-                                            # in the father prefix
-                                            # command
-        else:
-            command =  self.basic(['bash', '-c', "([ -d '"+self.basedir+"' ] || mkdir -p '"+self.basedir+"') && cd '"+self.basedir+"' && "+' '.join(cmd)])
+        command =  self.basic(cmd)
         return command
 
     def ssh(self, cmd=[]):
@@ -47,8 +45,9 @@ class VagrantCmds(Commands):
         if self.machine:
             command += [ self.machine ]
         command += [ '-c' ]
-        return self.simple(command + [' '.join(cmd)])
+        return self.simple(self.around_command(command + [' '.join(cmd)]))
 
+    # helpers
     def snap(self, command = '', snap=''):
         """ Command on the socle. """
         cmd = ['vagrant', 'snap', command]
@@ -63,21 +62,21 @@ class VagrantCmds(Commands):
             cmd += [snap]
             if self.machine:
                 cmd += [ self.machine ]
-        return self.simple(cmd)
+        return self.around_command(cmd)
         
     def up(self):
         """ Command on the socle. """
-        cmd = ['vagrant', 'up']
+        cmd = ['exec', 'vagrant', 'up']
         if self.machine:
             cmd += [ self.machine ]
-        return self.simple(cmd)
+        return self.around_command(cmd)
 
     def init(self, boxname, boxurl = False):
         """ Command on the socle. """
         cmd = ['vagrant', 'init', boxname]
         if boxurl:
             cmd += [boxurl]
-        return self.simple(cmd)
+        return self.around_command(cmd)
 
     def snap_exists(self, snap = ''):
         """ Raw Command on the socle for property testing. """
@@ -95,7 +94,7 @@ class VagrantCmds(Commands):
         if self.machine:
             cmd_prefix += [ self.machine ]
         command = [' '.join(cmd_prefix) + ' 2>/dev/null | egrep -q ' + grep]
-        return command
+        return self.around_command(command)
         
 class Vagrant(Vm):
     def __init__(self, 
@@ -124,21 +123,25 @@ class Vagrant(Vm):
         if self.run_on_vm:
             self.can_snap = False
 
-    def addUploadDirectory(self, src_dir, dst_dir):
+    def addDownloadDirectory(self, src_dir, dst_dir):
         """ Must be provided to upload a dir to the vm """
         dir_in_vm = '/upload/'+ dst_dir
         # TODO: make the dir name unique, see next TODO
         tmp_dir = self.basedir + dir_in_vm
         # TODO: WithProperties %(buildername)s-%(buildnumber)s' may work.
         # To upload I just copy to the root vagrant dir as it is shared
+        print "		DEBUG: uploaddir: cp " + src_dir + "/ and dst " + tmp_dir
         self.addCpDirectory(src_dir + '/', tmp_dir)
-        self.factory.addStep(ShellCommand(
-                command = self.vagrant_cmd.ssh(['cp','-a', '/vagrant' + dir_in_vm + '/', dst_dir]),
-                description = 'Uploading',
-                descriptionDone = 'Uploaded'))
+        print "		DEBUG: uploaddir: ssh cp " + '/vagrant' + dir_in_vm + "/ and dst " + dst_dir
+        self.addCpDirectoryInVm('/vagrant' + dir_in_vm + '/',dst_dir)
+#        self.factory.addStep(ShellCommand(
+#                command = self.vagrant_cmd.ssh(['cp','-a', '/vagrant' + dir_in_vm + '/', dst_dir]),
+#                description = 'Uploading',
+#                descriptionDone = 'Uploaded'))
+        print "		DEBUG: UPLOADDIRECTORY: return " + dst_dir
         return dst_dir
 
-    def addUploadFileFromSocle(self, src_file, dst_file, workdir = '/', on_socle = False):
+    def addDownloadFileFromSocle(self, src_file, dst_file, workdir = '/', on_socle = False):
         dst_file_rel = dst_file
         workdir_rel  = workdir
 
@@ -168,13 +171,12 @@ class Vagrant(Vm):
             self.pre_commands_hook.append(cmd)
 
     def command_prefix(self, cmd = []):
-        if string.find(' '.join(cmd), ' snap ') >= 0:
-            return self.vagrant_cmd.simple(cmd)
         return self.vagrant_cmd.ssh(cmd)
 
     # TODO : need to support more os
     def install_packages(self):
-        self.addSetPropertyTF(command = ["facter operatingsystem | egrep -q 'Ubuntu|Debian'"],
+        self.addSetPropertyTF(command = self.commands.with_bash(
+                ["facter operatingsystem | egrep -q 'Ubuntu|Debian'"]),
                               property = 'IS_DEBIAN')
 
         dest_script_file = '/tmp/install-virtualbox.sh'
@@ -199,10 +201,10 @@ if [ -z "`which VBoxManage`" ]; then
     fi
 fi
 """
-        self.addUploadFile(src_file = dest_script_file_content,
-                           dst_file = dest_script_file)
+        self.addDownloadFile(src_file = dest_script_file_content,
+                             dst_file = dest_script_file)
         self.addCommandIf(
-                command = self.commands.simple(['bash', dest_script_file]),
+                command = ['bash', dest_script_file],
                 property_name = 'IS_DEBIAN',
                 true_or_false = 'TRUE',
                 workdir = 'build',
@@ -210,20 +212,22 @@ fi
                 descriptionDone = 'VirtualBox Done')
 
         self.addShellCmd(
-            command = ['gem', 'list', '-i vagrant -v', "'"+VAGRANT_VERSION+"'", '||',
-                      'sudo', 'gem', 'install vagrant -v', "'"+VAGRANT_VERSION+"'"],
+            command = self.commands.with_bash([
+                'gem', 'list', '-i vagrant -v', "'"+VAGRANT_VERSION+"'", '||',
+                'sudo', 'gem', 'install vagrant -v', "'"+VAGRANT_VERSION+"'"]),
             description='Installing Vagrant',
             descriptionDone='Vagrant installed')
 
     def install_snap(self):
         self.addShellCmd(
-            command = ['gem', 'list', '-i virtualbox', '||',
-                       'sudo', 'gem', 'install', 'virtualbox'],
+            command = self.commands.with_bash(['gem', 'list', '-i virtualbox', '||',
+                                              'sudo', 'gem', 'install', 'virtualbox']),
             description='Installing VB for '+self.name ,
             descriptionDone='virtualbox '+self.name,)
         self.addShellCmd(
-                command= ['gem', 'list', '-i vagrant-snap -v', "'"+VAGRANT_SNAP_VERSION+"'", '||',
-                          'sudo', 'gem', 'install vagrant-snap -v', "'"+VAGRANT_SNAP_VERSION+"'"],
+                command= self.commands.with_bash(
+                ['gem', 'list', '-i vagrant-snap -v', "'"+VAGRANT_SNAP_VERSION+"'", '||',
+                 'sudo', 'gem', 'install vagrant-snap -v', "'"+VAGRANT_SNAP_VERSION+"'"]),
                 description='Installing Snap for ' + self.name,
                 descriptionDone='Snap installed for' + self.name)
 
@@ -252,7 +256,7 @@ fi
                 descriptionDone = 'Dir created',
                 property_name = self.name+'_is_installed')
 
-        self.addSetPropertySimpleTF(
+        self.addSetPropertyTF(
                 command=self.commands.vm_is_running(),
                 description='Setting property',
                 property=self.name+'_is_running')

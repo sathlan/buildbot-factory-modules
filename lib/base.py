@@ -14,6 +14,7 @@ from buildbot.steps.source.git import Git
 from buildbot.steps.slave import RemoveDirectory
 from buildbot.steps.shell import ShellCommand
 from buildbot.steps.transfer import StringDownload
+from buildbot.steps.transfer import FileDownload
 
 import tempfile
 import os.path
@@ -33,15 +34,16 @@ class Base():
     def start(self, quick = False, first = True):
         snapper = None
         if self.run_on_vm:
-            snapper = self.vm.start(quick, first = False)
+            snapper = self.vm.start(quick = quick, first = False)
 
         if self.is_vm and self.can_snap and not self.run_on_vm:
             snapper = self
 
         if snapper:
-            snapper.addSetPropertySimpleTF(
-                command = snapper.commands.snap_exists(self.name),
-                property = self.name)
+            if first: 
+                snapper.addSetPropertyTF(
+                    command = snapper.commands.snap_exists(self.name),
+                    property = self.name)
         
         # assumes a restore to a snap will start the vm if it's stopped. 
         if not quick:
@@ -60,7 +62,8 @@ class Base():
 
         if snapper:
             snapper.start_quick(self.name, quick, first)
-            snapper.addTakeSnap(self.name)
+            if not quick:
+                snapper.addTakeSnap(self.name)
 
         return snapper
 
@@ -70,12 +73,10 @@ class Base():
             if self.fix_network:
                 self.fix_net
 
-    def addUploadFile(self, src_file, dst_file, workdir = '/', steps = []):
+    def addDownloadFile(self, src_file, dst_file, workdir = '/', steps = []):
+        this_step = [self] + steps
         if self.run_on_vm:
-            print 'DEBUG: ' + str(self.vm)
-            this_step = steps +\
-                [lambda src_file, dst_file, workdir, me=self.vm: me.addUploadFileFromSocle(src_file, dst_file, workdir)]
-            self.vm.addUploadFile(src_file = src_file,
+            self.vm.addDownloadFile(src_file = src_file,
                                   dst_file = dst_file,
                                   workdir  = workdir,
                                   steps    = this_step)
@@ -90,39 +91,35 @@ class Base():
             # workdir and all are for the final vm, here we assure
             # that the final file will be in 'build/<workdir>/<dst_file>
             dst_file_rel = os.path.join(workdir_rel, dst_file_rel)
-            if isinstance(src_file, basestring):
+            if not os.path.exists(src_file):
                 self.factory.addStep(StringDownload(s         = src_file,
                                                     slavedest = dst_file_rel))
             else:
-                self.factory.addStep(FileUpload(mastersrc = src_file,
-                                                slavedest = dst_file_rel))
+                self.factory.addStep(FileDownload(mastersrc = src_file,
+                                                  slavedest = dst_file_rel))
             # now I deleguate the "upload" to each vm.
-            iter_dir = False
-            last = len(steps)
+            iter_file = False
+            last = len(this_step)
             cmpt = 1
-            if last == 0:
-                # not any vm, but still have to mv dir to dst
-                print "DEBUG: LAST0 = 0 for vm " + self.name
-                self.addUploadFileFromSocle(dst_file_rel, dst_file, workdir, on_socle = True)
-            for step in steps:
-                print "DEBUG: LAST0 != 0 for vm " + self.name
+            for step in this_step:
                 final_dst = '/tmp'+ dst_file
                 if cmpt == last:
                     final_dst = dst_file
-                if not iter_dir:
-                    iter_file = step(dst_file_rel, final_dst, workdir) # directory where the src is.
-                else:
-                    iter_file = step(iter_dir, final_dst, workdir)
+                if not iter_file: # root vm
+                    iter_file = step.addDownloadFileFromSocle(dst_file_rel, final_dst, workdir)
+                else:           # itermediary vm
+                    iter_file = step.addDownloadFileFromSocle(iter_file, final_dst, workdir)
+                cmpt += 1
 
-    def addUploadGitDir(self, repo_url = '', dest_dir = '', mode='copy', use_new = False,
+    def addDownloadGitDir(self, repo_url = '', dest_dir = '', mode='copy', use_new = False,
                         steps = []):
         """ Upload to a dir a Git(+patch) repository.  Support any number of underlying VM """
+        this_step = [self] + steps
         if self.run_on_vm:
-            this_step = steps +\
-                [lambda src_dir,dst_dir,s=self.vm: s.addUploadDirectory(src_dir, dst_dir)]
-            self.vm.addUploadGitDir(repo_url = repo_url,
+            self.vm.addDownloadGitDir(repo_url = repo_url,
                                     dest_dir = dest_dir,
                                     mode = mode,
+                                    use_new = use_new,
                                     steps = this_step)
         else:
             # the Try module does not work with the new Git module 0.8.5
@@ -131,19 +128,17 @@ class Base():
             else:
                 self.factory.addStep(GitOld(repourl=repo_url, mode=mode))
             iter_dir = False
-            last = len(steps)
+            last = len(this_step)
             cmpt = 1
-            if last == 0:
-                # not any vm, but still have to mv dir to dst
-                self.addUploadDirectory('.', dest_dir, workdir, True)
-            for step in steps:
+            for step in this_step:
                 final_dst = '/tmp'+ dest_dir
                 if cmpt == last:
                     final_dst = dest_dir
                 if not iter_dir:
-                    iter_dir = step('../build', final_dst) # directory where the src is.
+                    iter_dir = step.addDownloadDirectory('../build', final_dst)
                 else:
-                    iter_dir = step(iter_dir, final_dst)
+                    iter_dir = step.addDownloadDirectory(iter_dir, final_dst)
+                cmpt += 1
 
     def addMakeDirectory(self, directory):
         self.factory.addStep(ShellCommand(
@@ -155,7 +150,7 @@ class Base():
         self.factory.addStep(ShellCommand(
             command = self.commands.basic(['bash', '-c', ' '.join(['rm','-rf', dst_dir, '&&',
                            'mkdir', '-p', dst_dir, '&&', 
-                           'cp', '-a',src_dir, dst_dir])]),
+                           'cp', '-a',src_dir + '/*', dst_dir])]),
             description = 'Copying Dir',
             descriptionDone = 'Dir Copied'))
 
@@ -168,34 +163,19 @@ class Base():
             description = 'Copying file',
             descriptionDone = 'File copied'))
 
-    def addSetProperty(self, command = [], **kwargs):
-        self.addSetPropertyBasic(
-                command=self.commands.basic(command),
-                **kwargs)
-
-    def addSetPropertyTF(self, command = [], **kwargs):
-        self.addSetPropertyBasic(
-                command=self.commands.basic(
-                    ['bash', '-c', ' '.join(['( ' ] + command +\
-                                                [ ' && echo TRUE) || echo FALSE'])]),
-                **kwargs)
-
-    def addSetPropertyBasicTF(self, command = [], **kwargs):
-        self.addSetPropertyBasic(
-                command= ['bash', '-c', '( ' ] + command + [ ' && echo TRUE) || echo FALSE'],
-                **kwargs)
-
-    def addSetPropertySimpleTF(self, command = [], **kwargs):
-        self.addSetPropertyBasic(
-                command=self.commands.simple(['bash', '-c', '( ' ] + command +\
-                                                 [ ' && echo TRUE) || echo FALSE']),
-                **kwargs)
-
-    def addSetPropertyBasic(self, command = [], description = False, property = '', **kwargs):
+    def addSetProperty(self, command = [], description = 'Setting Property', **kwargs):
         self.factory.addStep(shell.SetProperty(
-                command=command,
-                description = description or 'Setting Property',
-                property=property,
+                command=self.commands.simple(command),
+                description = description,
+                **kwargs))
+
+    def addSetPropertyTF(self, command = [], description = 'Setting Property', **kwargs):
+        cmd = self.commands.simple(['bash', '-c',' '.join(command + [' && echo TRUE'])])
+        cmd[-1] += ' || echo FALSE'
+        
+        self.factory.addStep(shell.SetProperty(
+                command = cmd,
+                description = description,
                 **kwargs))
 
     def addShellCmd(self, command=[], workdir = None, **kwargs):
@@ -214,18 +194,6 @@ class Base():
                 **kwargs
                 ))
 
-    def addShellCmdEarly(self, command=[], description = 'Running', descriptionDone='Done',
-                         timeout=1200, doStepIf=True, **kwargs):
-        cmd = self.commands.basic(command)
-        self.factory.addStep(ShellCommand(
-                command = cmd,
-                description = description,
-                descriptionDone = descriptionDone,
-                timeout = timeout,
-                doStepIf = doStepIf,
-                **kwargs
-                ))
-
     def addCommandIf(self, command = [], true_or_false = 'FALSE',
                     property_name = '', doStepIf = False, **kwargs):
         description = 'Running Maybe'
@@ -236,8 +204,9 @@ class Base():
             descriptionDone = kwargs['descriptionDone']
         doStepIf = lambda s, name=property_name,tf=true_or_false: \
             s.getProperty(name,'FALSE') == tf
+        print "DOING TOTOT: " + ' '.join(command)
         self.factory.addStep(ShellCommand(
-                command = command,
+                command = self.commands.simple(command),
                 doStepIf = doStepIf,
                 **kwargs
                 ))
