@@ -42,27 +42,19 @@ class BuilderWithQuick():
 
         for runner in self.runners:
             for factory_name, factory in self.factories.iteritems():
-                print "DEBUG: creating factory %s (%s)" % (factory_name, str(factory))
                 runner.factory = factory
                 for father in runner.get_father():
-                    print "DEBUG: creating factory %s (%s) for %s" % (factory_name, str(factory), str(father.name))
-                    
-                                                               
                     father.factory = factory
                 m = re.search('quick', factory_name)
                 if m:
-                    print "DEBUG: QUICK  -> runner %s and factory %s" % (runner.name, str(runner.factory))
                     runner.start(quick = True)
                 else:
-                    print "DEBUG: NORMAL -> runner %s and factory %s" % (runner.name, str(runner.factory))
                     runner.start(quick = False)
     
                 self.builder.append(
                     BuilderConfig(name    = factory_name,
                                   factory = factory,
                                   **kwargs))
-            for b in self.builder:
-                print "DEBUG: got builder %s" % b.name
             if try_s:
                 try_s[0].append(Try_Userpass(
                         name='try',
