@@ -1,85 +1,99 @@
 import string
+import re
+from error import MyCommandError
 
 class Commands():
+    """
+    Base class to which are delegated the creation of the command list send to buildbot.
+
+    In the ShellCommand type step, the commands are all created by a
+    subclass of this class.
+
+    Here we make sure that:
+    - if the command is executed in a vm, then the command is prepend with necessary command
+    - if the command starts with:
+      - bash -[cs]
+      - vagrant ssh -c
+      - sudo vzctl exec2 \d+
+      then the rest of the command will be properly quoted (using
+      double quote) to the end of the command.  Nested quote are
+      supported.
+
+    There are two limititations to this process:
+    1. user command should not use double quote X{"}, but single quote X{'}
+    2. commands inside command (like using backquote) are executed on the slave not the vm.
+    """
     def __init__(self, vm = None):
         self.vm = vm
         if vm:
             self.run_on_vm = True
         else:
             self.run_on_vm = False
+        #: my_cmds is the regex which recognize the command which ask
+        #: for quoting their args.
+        self.my_cmds = re.compile(
+            r"""(?P<pre>.*?)\s*
+                (?P<cmd>bash\s+-c|vagrant\s+ssh\s+-c|exec\s+sudo\s+vzctl\s+exec2\s+\d+)\s*
+                (?P<post>.*)""", re.X)
 
     def with_bash(self, cmd):
         return ['bash', '-c', ' '.join(cmd)]
-
+    
     def basic(self, cmd=[]):
+        """
+        Command is executed as is in the vm.
+
+        Basic command are transformed only for support of the underlying vm.
+        """
         if self.run_on_vm:
             command = self.vm.command_prefix(cmd)
         else:
-            command = self.myquote(cmd, -1)
+            command = self._myquote(cmd, -1)
         return command
 
-    def subquote(self, cmd_str, level):
-        bash_idx = 0
-        vagrant_idx = 0
-        bash_idx = string.find(cmd_str,'bash -c')
-        vagrant_idx = string.find(cmd_str, 'vagrant ssh -c')
-        spliter = ''
-        prefix = []
-        if vagrant_idx == -1 and bash_idx == -1:
-            return cmd_str
-        elif (bash_idx < vagrant_idx or vagrant_idx == -1) and bash_idx != -1:
-            spliter = 'bash -c'
-            prefix = ['bash', '-c']
-        elif (vagrant_idx < bash_idx or bash_idx == -1) and vagrant_idx != -1:
-            spliter = 'vagrant ssh -c'
-            prefix = ['vagrant', 'ssh', '-c']
+    def ssh(self):
+        """ Command executed in the VM, only need to be implemented by VM like class. """
+        raise MyCommandError("Must be implemented by the caller")
+
+    def simple(self):
+        """ Command executed in the slave. Alway needed. """
+        raise MyCommandError("Must be implemented by the caller")        
+
+    def _subquote(self, cmd_str, level):
+        """ Splits the command according to the L{my_cmds} regex. """
+        m = re.search(self.my_cmds, cmd_str)
+        if m:
+            pre     = m.group('pre')
+            command = m.group('cmd')
+            post    = m.group('post')
         else:
             return cmd_str
-
-        to_be_quoted = prefix + [cmd_str.partition(spliter)[-1]]
-        to_be_prepend = cmd_str.partition(spliter)[0]
-        cmd_str = to_be_prepend + ' '.join(self.myquote(to_be_quoted,level))
+        cmd_str       = pre + ' ' +\
+            ' '.join(self._myquote(re.split(' +',command) + [post] ,level))
         return cmd_str
 
-    def myquote(self, cmd, inside):
-        after_c      = False
-        after_bash   = False
-        after_vagrant_ssh   = False
-        after_vagrant       = False
-        new_cmd = []
-        quoted_cmd = ''
-        for element in cmd:
-            if after_c:
-                nbr_slash = inside
-                if inside < 0:
-                    next_nbr_slash = 0
-                    nbr_slash      = 0
-                    nbr_quote      = 0
-                else:
-                    next_nbr_slash = (inside * 2) + 1
-                    nbr_quote       = 1
-                
-                quoted_cmd = '\\' * nbr_slash + '"' * nbr_quote  + self.subquote(element, next_nbr_slash) + '\\' * nbr_slash + '"' * nbr_quote
-                after_c = False
-                new_cmd.append(quoted_cmd)
-                quoted_cmd = ''
-            elif after_bash or after_vagrant_ssh:
-                if element == '-c':
-                    after_c = True
-                after_bash = False
-                after_vagrant_ssh = False
-                new_cmd.append(element)
-            elif after_vagrant:
-                if element == 'ssh':
-                    after_vagrant_ssh = True
-                after_vagrant = False
-                new_cmd.append(element)
-            elif element == 'bash':
-                after_bash = True
-                new_cmd.append(element)
-            elif element == 'vagrant':
-                after_vagrant = True
-                new_cmd.append(element)
-            else:
-                new_cmd.append(element)
-        return new_cmd
+    def _myquote(self, cmd, inside):
+        """ Takes care of quoting using backslash nested quote. """
+        cmd_str = cmd
+        if isinstance(cmd, list):
+            cmd_str = ' '.join(cmd)
+        m = re.match(self.my_cmds, cmd_str)
+        if not m:
+            return cmd
+        command = re.split(' ', m.group('cmd'))
+        args    = m.group('post')
+        
+        nbr_slash = inside
+        if inside < 0:
+            next_nbr_slash = 0
+            nbr_slash      = 0
+            nbr_quote      = 0
+        else:
+            next_nbr_slash = (inside * 2) + 1
+            nbr_quote       = 1
+            
+        quoted_cmd = '\\' * nbr_slash + '"' * nbr_quote  + \
+            self._subquote(args, next_nbr_slash) + '\\' * nbr_slash + '"' * nbr_quote
+        
+        command.append(quoted_cmd)
+        return command

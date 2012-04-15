@@ -2,135 +2,153 @@
 # ex: set syntax=python:
 
 from my_commands import Commands
+from vm          import Vm
+from error       import VmError
 
-from buildbot.steps import shell
+from buildbot.steps              import shell
 from buildbot.process.properties import Property
-from buildbot.steps.shell import ShellCommand
-from buildbot.steps.source.git import Git
-from buildbot.steps.transfer import StringDownload
+from buildbot.steps.source.git   import Git
+from buildbot.steps.transfer     import StringDownload
+
+import os.path
+import re
 
 class OpenvzCommands(Commands):
-    def __init__(self, vzId = '', vm=False):
+    """
+    Define all necessary command helpers.
+    """
+    def __init__(self, vzId = '', basedir = '/', vm = False):
         Commands.__init__(self, vm)
         self.vzId = str(vzId)
+        self.machine = vzId
+        self.basedir = basedir
 
-    def simple(self, cmd=[]):
+    def simple(self, cmd=[], workdir = None):
         return self.basic(cmd)
 
-    def vzExec(self, cmd=[]):
+    def ssh(self, cmd=[], workdir = None):
         return self.basic(['exec', 'sudo', 'vzctl', 'exec2', self.vzId] + cmd)
 
-class Openvz:
+class Openvz(Vm):
+    """
+    This class support the creation of openvz vz and the execution of
+    commands inside the vz.
+
+    NOTE: It uses unavailable scripts and expect a sda4 LVM device
+    available, so it's not really portable.
+    """
     def __init__(self, 
-                 factory = '', 
                  vzId='', 
                  vzName='', 
                  vzType='VZsolo',
                  vzSize='5g',
                  vzIp='',
+                 vzGw='',
                  vzLimits='enovance-nolimit.tpl',
                  vzTemplate='enovance-debian-6.0-amd64',
-                 want_init_snap_named='openvz_setup',
                  workdir = '.',
-                 vm = False):
-        self.factory = factory
-        self.vz      = str(vzId)
-        self.vzName  = vzName
-        self.vzType  = vzType
-        self.vzSize  = vzSize
-        self.vzIp    = vzIp
-        self.vzLimits = vzLimits
-        self.vzTemplate = vzTemplate
-        self.workdir    = workdir
-        if vm:
-            self.workdir = vm.basedir
+                 fix_network = True,
+                 vm = None,
+                 **kwds):
+        self.boxname  = vzName
+        self.basedir  = os.path.join('/home/vz/up/', self.boxname, 'DATA/root')
+        self.vz       = str(vzId)
+        self.commands = OpenvzCommands(vzId = self.vz, basedir = self.basedir, vm = vm)
 
-        self.openvzcmd = OpenvzCommands(vzId = self.vz, vm = vm)
+        Vm.__init__(self, root_vm_dir = self.basedir, vm = vm, **kwds)
+        self.vzName      = vzName
+        self.vzType      = vzType
+        self.vzSize      = vzSize
+        self.vzIp        = vzIp
+        self.vzGw        = vzGw
+        self.vzLimits    = vzLimits
+        self.vzTemplate  = vzTemplate
+        self.can_snap    = False
+        self.fix_network = fix_network
+        self.name        = self.boxname
+#        self.name        = 'VZ ' + self.boxname
+        self.property_run    = self.boxname + '_RUN'
+        self.property_exists = 'VZ_INSTALLED'
 
-        self.want_init_snap_named=want_init_snap_named
-        self.pre_commands_hook=[]
-        self.vm = vm
 
-    def init_snap(self, name=''):
-        self.want_init_snap_named = name
+    def command_prefix(self, cmd = []):
+        """ Required by L{Command} class to be able to execute command in VM. """
+        return self.commands.ssh(cmd)
 
-    def add_pre_command(self,commands=[]):
-        for cmd in commands:
-            self.pre_commands_hook.append(cmd)
+    def install_packages(self):
+        # socle is already prepared
+        pass
 
-    def start(self):
-        property_name = self.want_init_snap_named
-        if self.vm:
-            self.vm.init_snap(property_name)
-            self.vm.start()
-
+    def install_vm(self):
+        m_ip = re.match('([^/]+)/\d+', self.vzIp)
+        if not m_ip:
+            raise VmError("vzIp must be provided in CIDR notation XXX.XXX.XXX.XXX/XX")
+        ip   = m_ip.group(1)
         self.addCreateVz(
             action   = self.vzType,
             size     = self.vzSize,
             name     = self.vzName,
-            ip       = self.vzIp,
+            ip       = ip,
             limits   = self.vzLimits,
-            template = self.vzTemplate,
-            vz_snap  = self.want_init_snap_named,)
+            template = self.vzTemplate)
 
-        while self.pre_commands_hook:
-            command = self.pre_commands_hook.pop()
-            self.factory.addStep(ShellCommand(
-                command = self.openvzcmd.simple(command),
-                description = 'Running Pre-Hook', 
-                descriptionDone='Pre-Hook',
-                wordir = self.basedir,
-                doStepIf = lambda s,name=property_name: s.getProperty(name, 'FALSE') == 'FALSE'))
+    def start_vm(self):
+        self.addCommandIf(
+            command         = ['sudo', 'vzctl', 'start', self.vz, '--wait'],
+            property_name   = self.property_run,
+            description     = 'Staring VZ',
+            descriptionDone = 'VZ up')
 
-        if self.vm:
-            self.vm.addTakeSnap(property_name)
+    def install_snap(self):
+        pass
 
-    def addOpenvzCmd(self,
-                     cmd = [],
-                     description = 'Running',
-                     descriptionDone = 'Done',
-                     timeout = 1200,
-                     doStepIf = True):
-        self.factory.addStep(ShellCommand(
-                command = self.openvzcmd.vzExec(cmd),
-                description = description,
-                descriptionDone = descriptionDone,
-                timeout = timeout,
-                workdir = self.workdir,
-                doStepIf = doStepIf))
-        
-        
-        
+    def addCreateVz(
+        self, 
+        action='VZsolo', 
+        size='5G', 
+        name='my_test', 
+        ip='', 
+        id='1', 
+        limits='enovance-nolimit.tpl', 
+        template='enovance-debian-6.0-amd64'):
 
-    def addCreateVz(self, action='VZsolo', size='5G', name='my_test', ip='', id='1', limits='enovance-nolimit.tpl', template='enovance-debian-6.0-amd64', vz_snap='____non_exististing_snap'):
-        dostepmaybe = lambda s,name=vz_snap: s.getProperty(name, 'FALSE') == 'FALSE'
+        self.addSetPropertyTF(
+            # test if any openvz is present
+            command  = ['sudo', 'vzlist', '-H', '-a', '2>/dev/null', '|', 'grep', '-q','.' ],
+            property = self.property_exists)
 
-        self.factory.addStep(ShellCommand(
-                command = self.openvzcmd.simple(['sudo', 'sed', '-i','-e','s/SOLO=0/SOLO=1/',
-                                                 '/opt/enovance/server/config_parse.sh']),
-                doStepIf = dostepmaybe,
-                workdir  = self.workdir,
-                descriptionDone = 'VzConfig_1'))
-        self.factory.addStep(ShellCommand(
-                command = self.openvzcmd.simple(['sudo', 'sed', '-i','-e','s/@@HOSTNAME1@@/'+self.vzName+'/g',
-                                                 '/opt/enovance/server/config']),
-                doStepIf = dostepmaybe,
-                workdir  = self.workdir,
-                descriptionDone = 'VzConfig_2'))
+        self.addSetPropertyTF(
+            # test if the vz is running
+            command  = ['sudo', 'vzlist', '-H', '-ah', self.boxname, '2>/dev/null',
+                        '|', 'grep', '-q', 'running' ],
+            property = self.property_run)
 
-        self.factory.addStep(ShellCommand(
-                command = self.openvzcmd.simple(['sudo', 'sed', '-i','-e','s/Normal/StandAlone/g',
-                                                 '/opt/enovance/server/config']),
-                workdir  = self.workdir,
-                doStepIf = dostepmaybe,
-                descriptionDone = 'VzConfig_3'))
-        self.factory.addStep(ShellCommand(
-                command = self.openvzcmd.simple(['sudo', 'apt-get', 'install', '-y', 'drbd8-utils']),
-                doStepIf = dostepmaybe,
-                workdir  = self.workdir,
-                descriptionDone = 'InstDRBD'))
-        self.factory.addStep(StringDownload(
-"""
+        self.addCommandIf(
+            command         = ['sudo', 'sed', '-i','-e','s/SOLO=0/SOLO=1/',
+                               '/opt/enovance/server/config_parse.sh'],
+            property_name   = self.property_exists,
+            description     = 'Configuring Vz 1',
+            descriptionDone = 'VzConfig_1')
+
+        self.addCommandIf(
+            command         = ['sudo', 'sed', '-i','-e','s/@@HOSTNAME1@@/'+self.vzName+'/g',
+                               '/opt/enovance/server/config'],
+            property_name   = self.property_exists,
+            description     = 'Configuring Vz 2',
+            descriptionDone = 'VzConfig_2')
+
+        self.addCommandIf(
+            command         = ['sudo', 'sed', '-i','-e','s/Normal/StandAlone/g',
+                               '/opt/enovance/server/config'],
+            property_name   = self.property_exists,
+            description     = 'Configuring Vz 3',
+            descriptionDone = 'VzConfig_3')
+        self.addCommandIf(
+            command         = ['sudo', 'apt-get', 'install', '-y', 'drbd8-utils'],
+            property_name   = self.property_exists,
+            descriptionDone = 'InstDRBD')
+        self.addDownloadFile(
+            src_file = """
 global {
   usage-count no;
  }
@@ -173,53 +191,116 @@ common {
     }
 
 }
-""", slavedest='drbd.conf'))
-        dest_dir = self.workdir
-        if not self.vm:
-            dest_dir = op.path.join('/','etc')
-        self.factory.addStep(ShellCommand(
-                command = self.openvzcmd.simple(['sudo', 'cp', 'drbd.conf', dest_dir]),
-                description = 'Copying',
-                doStepIf = dostepmaybe,
-                descriptionDone = 'drbd.conf'))
-        self.factory.addStep(ShellCommand(
-                command = self.openvzcmd.simple(['sudo', 'cp', '/vagrant/drbd.conf', '/etc/drbd.conf']),
-                doStepIf = dostepmaybe,
-                workdir  = self.workdir,
-                descriptionDone = 'DrbdInst'))
-        self.factory.addStep(ShellCommand(
-                command = self.openvzcmd.simple(['sudo', '/etc/init.d/drbd', 'restart']),
-                workdir  = self.workdir,
-                doStepIf = dostepmaybe,
-                descriptionDone = 'DrbdStart'))
-        self.factory.addStep(ShellCommand(
-                command = self.openvzcmd.simple(['sudo', 'pvcreate', '/dev/sda4']),
-                workdir  = self.workdir,
-                doStepIf = dostepmaybe,
-                descriptionDone = 'PV created'))
-        # harcoded for VZsolo
-        self.factory.addStep(ShellCommand(
-                command = self.openvzcmd.simple(['sudo', 'vgcreate', 'vg1','/dev/sda4']),
-                workdir  = self.workdir,
-                doStepIf = dostepmaybe,
-                descriptionDone = 'VG created'))
-        self.factory.addStep(ShellCommand(
-                command = self.openvzcmd.simple(['sudo', '/opt/enovance/server/enovance-VZ-ctl',
-                          action,
-                          size,
-                          name,
-                          ip,
-                          id, 
-                          limits,
-                          template]),
-                workdir  = self.workdir,
-                doStepIf = dostepmaybe,
-                descriptionDone = 'VZ created'))
-        self.factory.addStep(ShellCommand(
-                command = self.openvzcmd.simple(['sudo', 'vzctl', 'start', self.vz]),
-                workdir = self.workdir,
-                doStepIf = dostepmaybe,
-                descriptionDone = 'VZ up'))
+""",
+            dst_file = '/etc/drbd.conf', as_root = True)
 
-    def command_prefix(self, cmd = []):
-        return self.openvzcmd.vzExec(new_cmd)
+        self.addCommandIf(
+            command         = ['sudo', '/etc/init.d/drbd', 'restart'],
+            property_name   = self.property_exists,
+            description     = 'Starting DRBD',
+            descriptionDone = 'DrbdStart')
+        self.addCommandIf(
+            command         = ['sudo', 'pvcreate', '/dev/sda4'],
+            property_name   = self.property_exists,
+            description     = 'Creating PV',
+            descriptionDone = 'PV created')
+        # harcoded for VZsolo
+        self.addCommandIf(
+            command         = ['sudo', 'vgcreate', 'vg1','/dev/sda4'],
+            property_name   = self.property_exists,
+            description     = 'Creating VG',
+            descriptionDone = 'VG created')
+        self.addCommandIf(
+            command         = ['sudo', '/opt/enovance/server/enovance-VZ-ctl',
+                               action,
+                               size,
+                               name,
+                               ip,
+                               id,
+                               limits,
+                               template],
+            property_name   = self.property_run,
+            description     = 'Creating VZ',
+            descriptionDone = 'VZ created')
+
+        self.add_to_post_start_hook(self._fix_net)
+
+    def _fix_net(self):
+
+        self.addCommandIf(
+            command         = ['sudo', 'bash', '-c', 'brctl addbr vzbr0' +\
+                                   ' && ip l set vzbr0 up && ip a add '+\
+                                   self.vzGw+' brd + dev vzbr0'],
+            property_name   = self.property_run,
+            description     = 'Bridging VZ',
+            descriptionDone = 'VZ bridged')
+
+        self.addCommandIf(
+            command         = ['sudo', 'vzctl', 'set', self.vz, '--netif_add',
+                               'eth0,,veth1.0', '--save'],
+            property_name   = self.property_run,
+            description     = 'Adding if to VZ',
+            descriptionDone = 'VZ hw if')
+
+        m_gw_ip = re.search('([^/]+)/\d+', self.vzGw)
+        if not m_gw_ip:
+            raise VmError("vzGw must be provided in CIDR notation XXX.XXX.XXX.XXX/XX")
+        vz_gw_ip = m_gw_ip.group(1)
+
+        self.addCommandInVmIf(
+            command         = ['bash', '-c', " ip a add "+self.vzIp+ " brd + dev eth0" + \
+                                  " && ip l set eth0 up " +\
+                                  " && echo nameserver 8.8.8.8 > /etc/resolv.conf" +\
+                                  ' && ip r add default via '+vz_gw_ip],
+            property_name   = self.property_run,
+            description     = 'Networking VZ'
+            descriptionDone = 'VZ network')
+
+        self.addCommandIf(
+            command         = ['sudo', 'iptables', '-t', 'nat', '-I', 'POSTROUTING', '-o', 'eth0',
+                               '-j', 'MASQUERADE'],
+            property_name   = self.property_run,
+            description     = 'Masquarading VZ net.'
+            descriptionDone = 'VZ Masquaraded')
+
+    def addDownloadFileFromSocle(self, src_file, dst_file, workdir = '/',
+                                 on_socle = False, as_root = False):
+        """
+        Download a file available on the container to the VZ.
+
+        It directly copy it into the L{basedir}.
+
+        Can optionally be executed as root using passwordless sudo
+        from the container.
+        """
+        dst_file_final     = dst_file
+        if os.path.isabs(dst_file_final):
+            dst_file_final = os.path.relpath(dst_file_final, '/')
+
+        dst_file_final     = os.path.join(self.basedir, dst_file_final)
+        self.addCpFile(src_file, dst_file_final, as_root)
+
+    def addDownloadDirectory(self, src_dir, dst_dir, as_root = False):
+        """
+        Download a directory available on the container to the VZ.
+
+        It directly copy it into the L{basedir} in the desire directory.
+
+        Can optionally be executed as root using passwordless sudo
+        from the container.
+        """
+        dst_dir_final     = dst_dir
+        if os.path.isabs(dst_dir_final):
+            dst_dir_final = os.path.relpath(dst_dir_final, '/')
+
+        dst_dir_final     = os.path.join(self.basedir, dst_dir_final)
+        self.addCpDirectory(src_dir, dst_dir_final, as_root)
+
+    def addOpenvzCmd(self, command = [], **kwargs):
+        self.addShellCmdInVm(command = command, **kwargs)
+
+    def addCpFile(self, src_file, dst_file_final, as_root = True):
+        super(Openvz, self).addCpFile(src_file, dst_file_final, True)
+
+    def addCpDirectory(self, src_file, dst_file_final, as_root = True):
+        super(Openvz, self).addCpDirectory(src_file, dst_file_final, True)
