@@ -199,10 +199,10 @@ fi
             description     = 'Installing VirtualBox',
             descriptionDone = 'VirtualBox Done')
 
-        self.addCommandIfRaw(
-            command         = self.commands.with_bash([
-                    'gem', 'list', '-i vagrant -v', "'"+VAGRANT_VERSION+"'", '||',
-                    'sudo', 'gem', 'install vagrant -v', "'"+VAGRANT_VERSION+"'"]),
+        self.addCommandIf(
+            command         = [
+                'gem', 'list', '-i vagrant -v', "'"+VAGRANT_VERSION+"'", '||',
+                'sudo', 'gem', 'install vagrant -v', "'"+VAGRANT_VERSION+"'"],
             property_name   = self.property_exists,
             description     = 'Installing Vagrant',
             descriptionDone = 'Vagrant installed')
