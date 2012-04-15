@@ -194,9 +194,6 @@ class Base(object):
 
         return snapper
 
-    def with_bash(self, cmd = []):
-        return ['bash', '-c', ' '.join(cmd)]
-
     def addStep(self, step):
         """ Delegator to the buildbot factory module. """
         self.factory.addStep(step)
