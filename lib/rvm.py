@@ -44,12 +44,17 @@ class Rvm(Base):
         self.gemset            = gemset
         self.modules           = modules
         self.vm                = vm
-#        self.name              = 'RVM ' + self.ruby_version + '@' + self.gemset
-        self.name              = 'RVM'
+        self.name              = self.ruby_version + '@' + self.gemset
+#        self.name              = 'RVM'
         self.ruby_version_base = '1.8.7-p302' # default debian version.
-        self.commands          = RvmCommands(ruby_version=ruby_version, gemset=gemset, vm = vm)
         self.is_vm = False
         Base.__init__(self, vm, **kwargs)
+
+    def init_command(self):
+        self.commands = RvmCommands(ruby_version=self.ruby_version, 
+                                    gemset=self.gemset, 
+                                    vm = self.vm)
+
 
     def install_packages(self):
         # assumes puppet, debian style or pkg_add.
@@ -105,15 +110,16 @@ class Rvm(Base):
             for tmp in mod.items(): # only one iteration
                 module, version = tmp
             args = []
+            v = version
             if isinstance(version, types.ListType):
-                args = version
-                args.reverse()
-                version = args.pop()
+                v = version[0]
+                if len(version) > 1:
+                    args = version[1:]
             self.addCommandIfRaw(
                 description="Checking",
                 descriptionDone=module,
                 property_name = self.name,
-                command=self.commands.check_or_install(module, version, args))
+                command=self.commands.check_or_install(module, v, args))
 
     def addRVMCmd(self, command = [], **kwargs):
         self.addShellCmd(command = command, **kwargs)

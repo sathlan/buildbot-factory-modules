@@ -1,6 +1,8 @@
 # Try schedule does not work with the new git module
+# -*- coding: UTF-8 -*-
 # version 0.8.5 12/21/04
 from error import MyFactoryError
+from my_builders import ThisBuilder
 
 from buildbot.steps import shell
 # Try schedule does not work with the new git module
@@ -23,6 +25,123 @@ import tempfile
 import os.path
 from inspect import isfunction
 import copy
+from buildbot.changes.filter import ChangeFilter
+
+class OneFactory(object):
+    """
+    Represent a tree of builder.
+    """
+
+    def __init__(self, root):
+        self.root = root
+        self.children = []
+
+    def add(self, child):
+        self.children += [child]
+
+class BuilderFactory(object):
+    """
+    Singleton class that hold all the definition made by the user.
+
+    Then we can make sure that the longest path is used by the user.
+
+    TODO: It works on tree not forest.
+    """
+    # http://fr.wikipedia.org/wiki/Singleton_(patron_de_conception)#Python
+    _instance  = None       # Attribut statique de classe
+    _has_started = False
+    _callers   = []
+    _trees_bag = []
+    _builders  = []
+    def __new__(laClasse, *args, **kwargs): 
+        "méthode de construction standard en Python"
+        if laClasse._instance is None:
+            laClasse._instance = object.__new__(laClasse, *args, **kwargs)
+        return laClasse._instance
+
+    def __init__(self, caller):
+        BuilderFactory._callers += [caller]
+        self.callers     = BuilderFactory._callers
+        self.max         = caller
+        self.builders    = BuilderFactory._builders
+        self.__func      = ''
+
+    def add_builder(self, builder):
+        BuilderFactory._builders.append(builder)
+        print "GETTING %s BUILDERS" % BuilderFactory._builders
+        self.builders = BuilderFactory._builders
+
+    def is_root(self, builder):
+        print "IS ROOT: %s <-> " %  builder.root
+        
+        if builder.root in self.roots():
+            return True
+        else:
+            return False
+
+    def get_builders(self):
+        for builder in BuilderFactory._builders:
+            yield builder
+
+    def get_root_builders(self):
+        for root in self.get_builders():
+            if self.is_root(root):
+                yield root
+
+    def has_started(self):
+        started = BuilderFactory._has_started
+        BuilderFactory._has_started = True
+        return started
+
+    def max(self):
+        maybe = self.max
+        for caller in self.callers:
+            if caller.max_descendant_depth > maybe.max_descendant_depth:
+                maybe = caller
+        self.max = maybe
+
+    def roots(self):
+        roots = set([])
+        with_parent = set([])
+        for caller in self._callers:
+            for descendant in caller.descendants:
+                with_parent |= set(descendant.ancestors[:-1])
+                roots.add(descendant.ancestors[-1])
+        for root_maybe in roots:
+            if root_maybe in with_parent:
+                roots.remove(root_maybe)
+        return roots
+
+    def get_builders_name(self):
+        names = []
+        for builder in self.builders:
+            names.append(builder.get_builder_name())
+        return names
+
+    def addBuilder(self, builders = [], **kwargs):
+        print "ADDING BUILDER"
+        for builder in self.get_root_builders():
+            name    = builder.get_builder_name()
+            factory = builder.get_factory()
+            print "	DEBUG : CREATING BUILDER %s (%s)" % (name, self.roots())
+            builders.append(
+                BuilderConfig(name    = name,
+                              factory = factory,
+                              **kwargs))
+
+    def __getattr__(self, name):
+        """
+        Dispatcher to catchall function.
+        """
+        self.__func = name
+        return getattr(self, 'dispatch')
+
+    def dispatch(self, *args, **kwargs):
+        for builder in self.builders:
+            builder.update_vm()
+            builder.update_factory()
+            print "BUILDER %s and ROOT %s and func %s" % ( builder, builder.root, self.__func)
+            getattr(builder.root, self.__func)(*args,**kwargs)
 
 class BuilderWithQuick():
     """
@@ -58,7 +177,10 @@ class BuilderWithQuick():
             if try_s:
                 try_s[0].append(Try_Userpass(
                         name='try',
-                        builderNames=self.factories.keys(),
+                         # quick only to not patch git source use in
+                         # the first build process (like in vagrant
+                         # git source)
+                        builderNames=[self.name + '_quick'],
                         port=try_s[1],
                         userpass=[('sampleuser','samplepass')]))
 
@@ -86,28 +208,85 @@ class Base(object):
     inherited by all modules.  If the class is to be a virtual
     machine, L{Vm} should be inherited instead.
     """
-    def __init__(self, vm = None, factory = ''):
+    def __init__(self, vm = None, vms = [], factory = ''):
         self._factory = factory
 
-        if vm != None:
+        if vm != None or vms != []:
             self.run_on_vm = True
         else:
             self.run_on_vm = False
+        #: the vm on which the steps take place
         self.vm          = vm
+        #: multiple vm can be specified instead.
+        #: if a list, then a list of factories will be returned by L{start}
+        #: if a dict, then it's L{'vm1' : [ vm_obj, factory_obj], ...}
         self.is_vm       = False
         self.can_snap    = False
         self.post_start_hook = []
         self.pre_start_hook  = []
         self.fathers         = []
         self.from_inside     = False
+        self.parents         = []
+        #: keep track of the whole path that led here
+        self.ancestors       = []
+        #: keep track of all the final leave from here
+        self.descendants     = set([])
+        self.vms             = vms
+        self.builderfactory    = BuilderFactory(self)
+        #: just a counter for statistics
+        self.nbr_of_steps    = 0
         try:
             self.name
         except AttributeError:
             self.name = 'Unknown'
+        # fill ancestors and descendants
+        self._get_parent()
+        # and some stats
+        self.max_descendant_depth = 0
+        for descendant in self.descendants:
+            depth = len(descendant.ancestors)
+            if self.max_descendant_depth < depth:
+                self.max_descendant_depth = depth
 
-        for father in self.get_father():
-            father.fathers += self.fathers + [self]
+        # debug inforamtion
+        print ">>> DESCENDANTS OF %s (%s)" % (self ,self.name)
+        for d in self.descendants:
+            print "	%s (%s)" % (str(d), d.name)
+            print "		with ancestors %s (%s)" % \
+                (str(d.ancestors), str(map(lambda x:x.name, d.ancestors)))
+        print "<<< DESCENDANTS OF %s (%s)" % (self ,self.name)
 
+    def _get_parent(self):
+        """
+        DSF of the ancestors giving back the complete path to the caller.
+        """
+        parent = self
+        ancestors = []
+        # fill the number of children that will have this element as an ancestor
+        for cpt in self.vms:
+            ancestors = [self] + ancestors
+        # tricky!  Make a copy of parent.vms instead of keeping a
+        # pointer on it, to avoid modification when we pop it.
+        children = [] + parent.vms
+        # depth first traversal
+        while children:
+            parent = children.pop()
+            children += parent.vms
+            # get its ancestor
+            direct_ancestor = ancestors.pop()
+            # record the path to the root
+            parent.ancestors = [direct_ancestor] + direct_ancestor.ancestors
+            # fill the number of children that will have this element as an ancestor
+            for cpt in parent.vms:
+                ancestors = [parent] + ancestors
+            if not parent.vms:
+                # record the end of a path
+                if parent in self.descendants:
+                    raise MyFactoryError(
+                        "We got a cycle in the tree of dependances! %s appears twice." % \
+                            parent.name)
+                self.descendants.add(parent)
+            
     def set_factory(self, factory):
         self._factory = factory
 
@@ -116,86 +295,206 @@ class Base(object):
 
     factory = property(fget = get_factory, fset = set_factory)
 
-    def get_father(self):
-        """
-        Iterator that return each parent vm to the caller.
-        """
-        father = self
-        while father.run_on_vm:
-            father = father.vm
-            yield father
-
-    def _start(self, from_inside = True, **kwargs):
-        """
-        Helper method which enforce that starts is call only by the
-        last element in the chain.
-        """
-        self.from_inside = from_inside
-        return self.start(**kwargs)
-
-    def start(self, first = True, quick = False):
+    def start(self):
         """
         This is the heart of the program.  It creates the precise
-        sequence of step which enable:
+        sequence of steps which enable:
         1. to start the underlying vm(s) if necessary;
         2. to install necessary paquages;
         3. to take the snapshot at the end of the setup if the underlying vm permit it.
+
+        The steps are added to the factory by L{addStep}.
+
+        It B{HAS TO BE} started from the last element in the chain,
+        not a sub-vm.
+
+        It supports several root elements.
+
+        When called, it returns the factories to the user, who can
+        then add steps to each.  The factories is a hash of root
+        composed of a hash of names/factory elements.
         """
+        # TODO: should return a object to facilitate adding step:
+        # check puppet/master.cfg
+        print ">>> ROOTS:"
+        for root in self.builderfactory.roots():
+            print "	 roots are %s (%s)" % (root, root.name)
+        print "<<< ROOTS:"
 
-        #: This will be the vm (if available) that will take the snap at the end.
-        snapper = None
+        if self.builderfactory.has_started():
+            raise MyFactoryError("Start has to be called only one time.")
 
-        if self.run_on_vm:
-            # recurse
-            snapper = self.vm._start(quick = quick, first = False)
+        if self not in self.builderfactory.roots():
+            raise MyFactoryError("Must be called from the last element in the chain %snot %s" \
+                                     % ('or '.join(
+                        map(lambda x: x.name + ' ', self.builderfactory.roots())), 
+                                        self.name))
+        # We are good to go.
+        factories    = {}
+        nbr_of_chains   = 0
+        nbr_of_elements = 0
+        nbr_of_steps    = 0
+        
+        for quick in [False, True]:
+            for root in self.builderfactory.roots():
+                
+                print 'ROOT: %s (%s)' % (root, str(quick))
+                root_name = root.name
+                if quick:
+                    root_name += '_quick'
+                # TODO: support multi-vms definitions
+                for descendant in root.descendants:
+                    nbr_of_chains += 1
+                    # with this structure I do not need the recursion
+                    # anymore.  A for loop will do.  I know the snapper
+                    # right from the start, and the last element of the
+                    # chain.  Easier code :)  I still need to populate vm
+                    # to make the Command class and the Download functions
+                    # happy.  Will change them later to avoid recursion
+                    # altogether.
+                    
+                    print "STARTING FROM %s" % descendant
+                    b = ThisBuilder(root = root, descendant = descendant, quick = quick)
+                    self.builderfactory.add_builder(b)
 
-        if len(self.fathers) > 0 and not self.from_inside:
-            # The user call a underlying vm directly.  Forbid it.
-            father = self.fathers[-1].name
-            raise MyFactoryError("I must be start from the end of the chain: %s" % father)
+                    path = b.get_path()
+                    current_factory_name = b.get_factory_name()
 
-        if self.is_vm and self.can_snap and not self.run_on_vm:
-            # I the last vm and I can snap, so I'm the snapper.
-            snapper = self
+                    current_factory = b.get_factory()
 
-        if snapper:
-            # got a snapper
-            if first and not quick:
-                # I'm in the first level caller and I'm not in a hury.
-                snapper.addSetPropertyTF(
-                    command = snapper.commands.snap_exists(self.name),
-                    property = self.name)
+#                    factories[root_name].update({current_factory_name : current_factory})
 
-        for command in self.pre_start_hook:
-            command()
-
-        if not quick:
-            self.install_packages()
-            if self.is_vm:
-                self.install_vm()
+                    b.update_vm()
+                    b.update_factory()
+                    # now we can start, and the behaviour will be ok.
+                    snapper = None
+                    if path[0].can_snap:
+                        snapper = path[0]
     
-            if self.can_snap:
-                self.install_snap()
+                    if not quick:
+                        snapper.addSetPropertyTF(
+                            command = snapper.commands.snap_exists(root.name),
+                            property = root.name)
     
-            if self.is_vm:
-                self.start_vm()
+                    level = 1
+                    last  = len(path)
+                    for element in path:
+                        print "	ELEMENT: %s" % element.name
+                        nbr_of_elements += 1
+                        for command in element.pre_start_hook:
+                            command()
+            
+                        if not quick:
+                            # TODO: should install heavy, non changing
+                            # stuff.  All those commands should be
+                            # idempotent, ie, doing it over an
+                            # existing installation should work
+                            # (better still, it shld avoid to install
+                            # them again altogther with a embeded
+                            # test.)
+                            element.install_packages()
+                            if element.is_vm:
+                                element.install_vm()
+                
+                            if element.can_snap and level == 0:
+                                element.install_snap()
+                
+                            if element.is_vm:
+                                element.start_vm()
+            
+                            # should install lightweight stuff and a
+                            # snap should be done before this one.
+                            # Then we can delete the last snap without
+                            # having to reinstall the heavy stuff
+                            # again.
+                            for command in element.post_start_hook:
+                                command()
+    
+                        if level == last and snapper:
+                            # If I'm the caller (last step) and I've got a snapper, so
+                            # revert to it.
+                            snapper.addRevertToSnap(element.name, assume_exists = True)
+    
+                        if not quick and snapper:
+                            # Take the snap if necessary at the end of the setup
+                            snapper.addTakeSnap(element.name)
 
-            for command in self.post_start_hook:
-                command()
+                        # stats
+                        if snapper != element:
+                            nbr_of_steps += element.nbr_of_steps
+                            element.nbr_of_steps = 0
+                        level += 1
+                    nbr_of_steps += snapper.nbr_of_steps
+                    snapper.nbr_of_steps = 0
+        print "CREATED %d chains with %d elements composed of %d steps" % \
+            (nbr_of_chains, nbr_of_elements, nbr_of_steps)
+        import pprint
+        pp = pprint.PrettyPrinter()
+        pp.pprint(factories)
+        return self.builderfactory
 
-        if first and snapper:
-            # If I'm the caller (last step) and I've got a snapper, so
-            # revert to it.
-            snapper.addRevertToSnap(self.name, assume_exists = True)
-
-        if not quick and snapper:
-            # Take the snap if necessary at the end of the setup
-            snapper.addTakeSnap(self.name)
-
-        return snapper
+#        #: This will be the vm (if available) that will take the snap at the end.
+#        snapper = None
+#
+#        if self.run_on_vm:
+#            # recurse
+#            snapper = self.vm._start(quick = quick, first = False)
+#
+#        if len(self.fathers) > 0 and not self.from_inside:
+#            # The user call a underlying vm directly.  Forbid it.
+#            father = self.fathers[-1].name
+#            raise MyFactoryError("I must be start from the end of the chain: %s" % father)
+#
+#        if self.is_vm and self.can_snap and not self.run_on_vm:
+#            # I the last vm and I can snap, so I'm the snapper.
+#            snapper = self
+#
+#        if snapper:
+#            # got a snapper
+#            if first and not quick:
+#                # I'm in the first level caller and I'm not in a hury.
+#                snapper.addSetPropertyTF(
+#                    command = snapper.commands.snap_exists(self.name),
+#                    property = self.name)
+#
+#        for command in self.pre_start_hook:
+#            command()
+#
+#        if not quick:
+#            self.install_packages()
+#            if self.is_vm:
+#                self.install_vm()
+#    
+#            if self.can_snap:
+#                self.install_snap()
+#    
+#            if self.is_vm:
+#                self.start_vm()
+#
+#            for command in self.post_start_hook:
+#                command()
+#
+#        if first and snapper:
+#            # If I'm the caller (last step) and I've got a snapper, so
+#            # revert to it.
+#            snapper.addRevertToSnap(self.name, assume_exists = True)
+#
+#        if not quick and snapper:
+#            # Take the snap if necessary at the end of the setup
+#            snapper.addTakeSnap(self.name)
+#
+#        return snapper
 
     def addStep(self, step):
-        """ Delegator to the buildbot factory module. """
+        """ 
+        Delegator to the buildbot factory module.
+
+        All sub-class should use this X{addStep} and not
+        X{self.factory.addStep} directly.
+        """
+
+        self.nbr_of_steps += 1
+        print "		STEP: %s (%s)" % (step, self.factory)
         self.factory.addStep(step)
 
     def addDownloadFile(self, src_file, dst_file, workdir = '/', as_root = False):
@@ -277,12 +576,14 @@ class Base(object):
                 cmpt += 1
 
     def addDownloadGitDir(self, repo_url = '', dest_dir = '', mode='copy',
-                          use_new = False, as_root = False):
+                          use_new = False, as_root = False, **kwargs):
         """ Download a dir a Git(+patch) repository.  Support any number of underlying VM """
-        self._addDownloadGitDir(repo_url, dest_dir, mode, use_new, as_root)
+        print "ADDING download git"
+        self._addDownloadGitDir(repo_url, dest_dir, mode, use_new, as_root, **kwargs)
+
 
     def _addDownloadGitDir(self, repo_url = '', dest_dir = '', mode='copy', use_new = False,
-                           as_root = False, steps = [], nbr_steps = 0):
+                           as_root = False, steps = [], nbr_steps = 0, **kwargs):
         this_step = [self] + steps
         if self.is_vm:
             nbr_steps += 1
@@ -293,13 +594,19 @@ class Base(object):
                                        use_new   = use_new,
                                        steps     = this_step,
                                        nbr_steps = nbr_steps,
-                                       as_root   = as_root)
+                                       as_root   = as_root,
+                                       **kwargs)
         else:
             # the Try module does not work with the new Git module 0.8.5
             if use_new:
-                self.addStep(Git(repourl=repo_url, mode='full', method='clean'))
+                self.addStep(Git(repourl=repo_url,
+                                 mode='full',
+                                 method='clean',
+                                 **kwargs))
             else:
-                self.addStep(GitOld(repourl=repo_url, mode=mode))
+                self.addStep(GitOld(repourl=repo_url, 
+                                    mode=mode,
+                                    **kwargs))
             iter_dir = False
             cmpt = 1
             for step in this_step:

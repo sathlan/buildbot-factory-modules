@@ -183,26 +183,27 @@ class Vm(Base):
                                           slavedest = dst_file))
 
     def addDownloadGitDirInVM(self, repo_url = '', dest_dir = '', mode='copy',
-                              use_new = False, as_root = False):
+                              use_new = False, as_root = False, **kwargs):
         """
         Checkout/Patch the Git and download it into the vm.
         """
         self._addDownloadGitDir(repo_url, dest_dir, mode,
-                                use_new, as_root)
+                                use_new, as_root, **kwargs)
 
     def addDownloadGitDir(self, repo_url = '', dest_dir = '', mode='copy',
-                          use_new = False, as_root = False):
+                          use_new = False, as_root = False, **kwargs):
         """
         Checkout/Patch the Git and download it to the "hardware" node
         (the slave or the underlying vm)
         """
         if self.run_on_vm:
-            self.vm._addDownloadGitDir(repo_url, dest_dir, mode, use_new, as_root)
+            self.vm._addDownloadGitDir(repo_url, dest_dir, mode, use_new, as_root, **kwargs)
         else:
             if use_new:
-                self.addStep(Git(repourl=repo_url, mode='full', method='clean'))
+                self.addStep(Git(repourl=repo_url, mode='full', method='clean', 
+                                 workdir = dest_dir, **kwargs))
             else:
-                self.addStep(GitOld(repourl=repo_url, mode=mode))
+                self.addStep(GitOld(repourl=repo_url, mode=mode, workdir = dest_dir, **kwargs))
 
     def _make_uniq_initial_name(self):
         """

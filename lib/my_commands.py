@@ -33,7 +33,7 @@ class Commands():
         #: for quoting their args.
         self.my_cmds = re.compile(
             r"""(?P<pre>.*?)\s*
-                (?P<cmd>bash\s+-c|vagrant\s+ssh\s+-c|exec\s+sudo\s+vzctl\s+exec2\s+\d+)\s*
+                (?P<cmd>bash\s+-c|vagrant\s+ssh\s+(?:[-\w_\d.]+\s+)?-c|exec\s+sudo\s+vzctl\s+exec2\s+\d+)\s*
                 (?P<post>.*)""", re.X)
 
     def with_bash(self, cmd):

@@ -4,9 +4,10 @@
 from os import *
 import os.path
 import string
+import re
 
 from vm   import Vm
-
+from error import VmError
 from my_commands import Commands
 
 from buildbot.steps import shell
@@ -76,7 +77,7 @@ class VagrantCmds(Commands):
             cmd += [ self.machine ]
         return self._around_command(cmd)
 
-    def init(self, boxname, boxurl = False):
+    def init(self, boxname, boxurl = None):
         """ Initialize the vagrant box. """
         cmd = ['[ -e ',self.vagrantfile, ']','||','vagrant', 'init', boxname]
         if boxurl:
@@ -115,16 +116,17 @@ class Vagrant(Vm):
     def __init__(self,
                  #: where the vm directory is
                  basedir            = '',
-                 #: machine name necessary in a multi-vm env.
-                 machine            = '',
-                 #: the git url where the vagrant definition is.
-                 vagrantfile_source = '',
+                 #: the name used by vagrant init, when the box is on
+                 #: the slave.
+                 boxname            = None,
+                 #: the url where the vagrant box is.
+                 boxurl             = None,
+                 #: the url where the vagrant definition is.  Only support Git.
+                 vagrant_src        = None,
+                 #: in multivm, we need the machine's name
+                 machine            = None,
                  #: The name of the vagrantfile
                  vagrantfile        = 'Vagrantfile',
-                 #: the name of the box.
-                 boxname            = '',
-                 #: the box url for uniq vm env.
-                 boxurl             = '',
                  #: running on a vm?
                  vm                 = None,
                  **kwargs):
@@ -132,14 +134,17 @@ class Vagrant(Vm):
         self.boxname            = boxname
         self.basedir            = os.path.expanduser(basedir)
         self.vagrantfile        = path.join(self.basedir, vagrantfile)
-        self.commands           = VagrantCmds(machine = machine, basedir = self.basedir, 
-                                              vagrantfile = self.vagrantfile, vm = vm)
+        self.machine            = machine
+        if self.boxname == None and self.machine:
+            self.boxname = self.machine # TODO: improve the logic.
+        box_m = re.match("^[-\w_\d.]+$", self.boxname)
+        if not box_m:
+            raise VmError("The name of the box (%s) can only contain [-\w_\d.]+" % self.boxname)
+        self.vagrant_src        = vagrant_src
         # MRO should kick in both Vm, and Base, and I should use new style class:
         # http://www.python.org/doc/newstyle/
         Vm.__init__(self, root_vm_dir = self.basedir, vm = vm, **kwargs)
 
-        self.machine            = machine
-        self.vagrantfile_source = vagrantfile_source
         self.boxurl             = boxurl
         self.can_snap           = True
         #: determine if the "package" steps are executed.
@@ -151,6 +156,12 @@ class Vagrant(Vm):
         if self.run_on_vm:
             self.can_snap = False
 
+    def init_command(self):
+        self.commands = VagrantCmds(machine = self.machine, 
+                                    basedir = self.basedir, 
+                                    vagrantfile = self.vagrantfile, 
+                                    vm = self.vm)
+        
     def command_prefix(self, cmd = []):
         """ Required by L{Command} class to be able to execute command in VM. """
         return self.commands.ssh(cmd)
@@ -218,18 +229,20 @@ fi
             command  = self.commands.vm_is_running(),
             property = self.property_run)
 
-        if self.vagrantfile_source:
+        if self.vagrant_src and self.vagrant_src.startswith("git"):
             # if the '.vagrant' file is not in the .gitignore it will
             # be deleted, so it must be added (manually)
-            self.addUploadGitDir(rep_url  = self.vagrantfile_source,
-                                 dest_dir = self.basedir,
-                                 use_new  = True)
+            self.addDownloadGitDir(repo_url = self.vagrant_src,
+                                   dest_dir = self.basedir,
+                                   use_new  = True)
         elif self.boxname:
             self.addCommandIf(
                     description     = 'Initializing ' + self.name,
                     descriptionDone = self.name + ' initialized',
                     property_name   = self.property_run,
                     command         = self.commands.init(self.boxname,self.boxurl))
+        else:
+            raise VmError("Cannot find the source of the Vagrant box.")
 
     def start_vm(self):
         """

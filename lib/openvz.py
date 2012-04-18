@@ -53,8 +53,6 @@ class Openvz(Vm):
         self.boxname  = vzName
         self.basedir  = os.path.join('/home/vz/up/', self.boxname, 'DATA/root')
         self.vz       = str(vzId)
-        self.commands = OpenvzCommands(vzId = self.vz, basedir = self.basedir, vm = vm)
-
         Vm.__init__(self, root_vm_dir = self.basedir, vm = vm, **kwds)
         self.vzName      = vzName
         self.vzType      = vzType
@@ -69,6 +67,11 @@ class Openvz(Vm):
 #        self.name        = 'VZ ' + self.boxname
         self.property_run    = self.boxname + '_RUN'
         self.property_exists = 'VZ_INSTALLED'
+
+    def init_command(self):
+        self.commands = OpenvzCommands(vzId = self.vz, 
+                                       basedir = self.basedir, 
+                                       vm = self.vm)
 
 
     def command_prefix(self, cmd = []):
@@ -253,14 +256,14 @@ common {
                                   " && echo nameserver 8.8.8.8 > /etc/resolv.conf" +\
                                   ' && ip r add default via '+vz_gw_ip],
             property_name   = self.property_run,
-            description     = 'Networking VZ'
+            description     = 'Networking VZ',
             descriptionDone = 'VZ network')
 
         self.addCommandIf(
             command         = ['sudo', 'iptables', '-t', 'nat', '-I', 'POSTROUTING', '-o', 'eth0',
                                '-j', 'MASQUERADE'],
             property_name   = self.property_run,
-            description     = 'Masquarading VZ net.'
+            description     = 'Masquarading VZ net.',
             descriptionDone = 'VZ Masquaraded')
 
     def addDownloadFileFromSocle(self, src_file, dst_file, workdir = '/',
