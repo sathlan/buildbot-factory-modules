@@ -5,8 +5,10 @@ from os import *
 import os.path
 import string
 import inspect
+import re
 
 from base import Base
+from base import MyName
 from error import VmError
 
 from buildbot.steps import shell
@@ -41,11 +43,11 @@ class Vm(Base):
                  commands_class = '',
                  machine = False,
                  **kwargs):
-        Base.__init__(self, vm = vm, **kwargs)
         self.vm                = vm
+        self.name              = self._make_uniq_initial_name()
+        Base.__init__(self, vm = vm, **kwargs)
         self.is_vm             = True
         self.root_vm_dir       = root_vm_dir
-        self.name              = self._make_uniq_initial_name()
 
     def addTakeSnap(self, snap_name='____non_exististing_snap'):
         """ Take a snap on the base vm.
@@ -112,7 +114,7 @@ class Vm(Base):
         """
         cmd = self.commands.ssh(command)
         self.addShellCmdBasic(command = cmd, **kwargs)
-
+                 
     def addCommandInVmIf(self, command = [], true_or_false = 'FALSE',
                     property_name = '', doStepIf = False, **kwargs):
         """
@@ -209,9 +211,6 @@ class Vm(Base):
         """
         Make a unique L{name} for the vm from L{boxname}.
         """
-        vm = self.vm
-        counter = 0
-        while vm:
-            vm = vm.vm
-            counter += 1
-        return self.boxname + '-' + str(counter)
+        name = MyName().uniq(self.boxname)
+        print "MAKING NAME %s for %s" % (name, self)
+        return name

@@ -148,9 +148,9 @@ class Vagrant(Vm):
         self.boxurl             = boxurl
         self.can_snap           = True
         #: determine if the "package" steps are executed.
-        self.property_exists    = 'VAG_INSTALLED'
+        self.property_exists    = self.name + '_EXI'
         #: determine if the "install" and "run" steps are executed.
-        self.property_run       = self.boxname + '_RUN'
+        self.property_run       = self.name + '_RUN'
 
         # The root VM should snap
         if self.run_on_vm:

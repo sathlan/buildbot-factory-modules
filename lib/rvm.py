@@ -80,7 +80,12 @@ class Rvm(Base):
                        "rvm requirements 2>&1 | grep ' ruby:.*install' | "+\
                        "cut -d: -f2 | sed -Ee 's/(.*)/\\1 -y/'); "+\
                        "bash -c source ~/.rvm/scripts/rvm; "+\
-                       "rvm install " + self.ruby_version_base]
+                       "(uname | grep -q 'FreeBSD' ) && "+\
+                       # https://gist.github.com/1151273
+                       "rvm install " + self.ruby_version_base +\
+                       ' -C --with-iconv-dir=/usr/local || '+\
+                       "rvm install " + self.ruby_version_base
+                       ]
 
         self.addCommandIfBasic(
             command = command,

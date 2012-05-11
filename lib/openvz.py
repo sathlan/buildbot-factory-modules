@@ -67,6 +67,7 @@ class Openvz(Vm):
 #        self.name        = 'VZ ' + self.boxname
         self.property_run    = self.boxname + '_RUN'
         self.property_exists = 'VZ_INSTALLED'
+        self.add_to_post_start_hook(self._fix_net)
 
     def init_command(self):
         self.commands = OpenvzCommands(vzId = self.vz, 
@@ -149,7 +150,8 @@ class Openvz(Vm):
         self.addCommandIf(
             command         = ['sudo', 'apt-get', 'install', '-y', 'drbd8-utils'],
             property_name   = self.property_exists,
-            descriptionDone = 'InstDRBD')
+            description     = 'Inst DRBD',
+            descriptionDone = 'DRBD install')
         self.addDownloadFile(
             src_file = """
 global {
@@ -226,10 +228,8 @@ common {
             description     = 'Creating VZ',
             descriptionDone = 'VZ created')
 
-        self.add_to_post_start_hook(self._fix_net)
-
     def _fix_net(self):
-
+        print "FIXING NET FOR %s (%s)" % (self, self.name)
         self.addCommandIf(
             command         = ['sudo', 'bash', '-c', 'brctl addbr vzbr0' +\
                                    ' && ip l set vzbr0 up && ip a add '+\

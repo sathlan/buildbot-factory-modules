@@ -2,11 +2,13 @@ from buildbot.process.factory import BuildFactory
 
 class ThisBuilder(object):
 
-    def __init__(self, root = None, descendant = None, quick = False):
+    def __init__(self, root = None, path = None, quick = False):
         print "NEW BUILDER : %s" % root
         self.root       = root
-        self.descendant = descendant
-        self.path       = None
+#        self.descendant = descendant
+        self.path       = path
+        print "THIS BUILDER %s" % self.root
+        print "	Got this path : %s" % self.path
         self.quick      = quick
         self.factory    = BuildFactory()
 
@@ -18,9 +20,7 @@ class ThisBuilder(object):
             return ''
 
     def get_path(self):
-        path = [self.descendant] + self.descendant.ancestors
-        self.path = path
-        return path
+        return self.path
 
     def get_factory_name(self):
         obj = self.path[0]
@@ -28,8 +28,8 @@ class ThisBuilder(object):
         return self.factory_name
 
     def get_builder_name(self):
-        print "DEBUG: builder name %s" %  self.get_path()[-1].name + self.get_factory_name()
-        return self.get_path()[-1].name + self.get_factory_name() + self.get_quick()
+        print "DEBUG: builder name %s" %  self.get_path()[-1].name + '@' + self.get_factory_name() + self.get_quick()
+        return self.get_path()[-1].name + '@' + self.get_factory_name() + self.get_quick()
 
     def get_factory(self):
         return self.factory
@@ -38,9 +38,12 @@ class ThisBuilder(object):
         pass
 
     def update_vm(self):
-        for idx, element in enumerate(self.path[1:]):
-            # modify element.vm with path[idx], mind the gap!
-            element.vm = self.path[idx]
+        print "UPDATING VM of %s" % self.root
+        if self.path[1:]:
+            for idx, element in enumerate(self.path[1:]):
+                print "	 with %s for %s" % (self.path[idx], element)
+                # modify element.vm with path[idx], mind the gap!
+                element.vm = self.path[idx]
         
     def update_factory(self):
         for element in self.path:

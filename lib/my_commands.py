@@ -2,6 +2,19 @@ import string
 import re
 from error import MyCommandError
 
+class Dummy():
+    def __init__(self, name):
+        self.name = name
+
+    def basic(self, *args):
+        self.throws()
+    def simple(self, *args):
+        self.throws()
+    def ssh(self, *args):
+        self.throws()
+    def throws(self, *args):
+        raise MyCommandError("You cannot call commands from \"%s\" use the BuilderFactory" %
+                             self.name)
 class Commands():
     """
     Base class to which are delegated the creation of the command list send to buildbot.

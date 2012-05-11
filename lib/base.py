@@ -3,6 +3,7 @@
 # version 0.8.5 12/21/04
 from error import MyFactoryError
 from my_builders import ThisBuilder
+from my_commands import Dummy
 
 from buildbot.steps import shell
 # Try schedule does not work with the new git module
@@ -39,6 +40,27 @@ class OneFactory(object):
     def add(self, child):
         self.children += [child]
 
+class MyName(object):
+    _instance = None
+    _names    = set([])
+    def __new__(laClasse, *args, **kwargs): 
+        "méthode de construction standard en Python"
+        if laClasse._instance is None:
+            laClasse._instance = object.__new__(laClasse, *args, **kwargs)
+        return laClasse._instance
+
+    def uniq(self, name):
+        suffix = ""
+        uniq   = name
+        # TODO: should lock somewhere
+        cpt    = 0
+        while uniq in MyName._names:
+            suffix = "-%d" % cpt
+            cpt += 1
+            uniq = name + suffix
+        MyName._names.add(uniq)
+        return uniq
+
 class BuilderFactory(object):
     """
     Singleton class that hold all the definition made by the user.
@@ -68,11 +90,9 @@ class BuilderFactory(object):
 
     def add_builder(self, builder):
         BuilderFactory._builders.append(builder)
-        print "GETTING %s BUILDERS" % BuilderFactory._builders
         self.builders = BuilderFactory._builders
 
     def is_root(self, builder):
-        print "IS ROOT: %s <-> " %  builder.root
         
         if builder.root in self.roots():
             return True
@@ -103,21 +123,31 @@ class BuilderFactory(object):
     def roots(self):
         roots = set([])
         with_parent = set([])
+        print "The caller of %s are %s" % (self, self._callers)
         for caller in self._callers:
-            for descendant in caller.descendants:
-                with_parent |= set(descendant.ancestors[:-1])
-                roots.add(descendant.ancestors[-1])
-        for root_maybe in roots:
-            if root_maybe in with_parent:
-                roots.remove(root_maybe)
+            for path in caller.paths:
+                print "HAVING another : %s" % (caller)
+                print "	DESCENDANTS of %s are %s" % (caller, path)
+                if set(path[:-1]):
+                    # we don't want union with empty set
+                    with_parent |= set(path[:-1])
+                    roots.add(path[-1])
+                roots -= with_parent
         return roots
 
     def get_builders_name(self):
         names = []
-        for builder in self.builders:
+        for builder in self.get_builders():
             names.append(builder.get_builder_name())
         return names
 
+    def get_builders_name_quick(self):
+        names = []
+        for builder in self.builders:
+            if builder.quick:
+                names.append(builder.get_builder_name())
+        return names
+        
     def addBuilder(self, builders = [], **kwargs):
         print "ADDING BUILDER"
         for builder in self.get_root_builders():
@@ -137,70 +167,18 @@ class BuilderFactory(object):
         return getattr(self, 'dispatch')
 
     def dispatch(self, *args, **kwargs):
+        to = None
+        if kwargs.has_key('to'):
+            to = kwargs['to']
+            del kwargs['to']
         for builder in self.builders:
             builder.update_vm()
             builder.update_factory()
-            print "BUILDER %s and ROOT %s and func %s" % ( builder, builder.root, self.__func)
-            getattr(builder.root, self.__func)(*args,**kwargs)
-
-class BuilderWithQuick():
-    """
-    Helper class which create two factories : one with the install
-    steps, one without name X{<name>_test}.  Syntaxic sugar really.
-    """
-    def __init__(self, 
-                 builder = None, name = 'runtests', runners = [], steps = [], try_s = [], **kwargs):
-        self.builder = builder
-        self.name    = name
-        self.runners = runners
-        self.steps   = steps
-
-        self.factories = {
-            name            : BuildFactory(),
-            name + '_quick' : BuildFactory()}
-
-        for runner in self.runners:
-            for factory_name, factory in self.factories.iteritems():
-                runner.factory = factory
-                for father in runner.get_father():
-                    father.factory = factory
-                m = re.search('quick', factory_name)
-                if m:
-                    runner.start(quick = True)
-                else:
-                    runner.start(quick = False)
-    
-                self.builder.append(
-                    BuilderConfig(name    = factory_name,
-                                  factory = factory,
-                                  **kwargs))
-            if try_s:
-                try_s[0].append(Try_Userpass(
-                        name='try',
-                         # quick only to not patch git source use in
-                         # the first build process (like in vagrant
-                         # git source)
-                        builderNames=[self.name + '_quick'],
-                        port=try_s[1],
-                        userpass=[('sampleuser','samplepass')]))
-
-    def __getattr__(self, name):
-        """
-        Dispatcher to catchall function.
-        """
-        self.__func = name
-        return getattr(self, 'catchall')
-
-    def catchall(self, *args, **kwargs):
-        """
-        Send function to the runner class.
-        """
-        for runner in self.runners:
-            for factory_name, factory in self.factories.iteritems():
-                runner.factory = factory
-                for father in runner.get_father():
-                    father.factory = factory
-                getattr(runner, self.__func)(*args, **kwargs)
+            destination = builder.root
+            if to:
+                destination = to
+            print "BUILDER %s and ROOT %s and func %s (%s)" % (builder, destination, self.__func, to)
+            getattr(destination, self.__func)(*args,**kwargs)
 
 class Base(object):
     """
@@ -222,6 +200,8 @@ class Base(object):
         #: if a dict, then it's L{'vm1' : [ vm_obj, factory_obj], ...}
         self.is_vm       = False
         self.can_snap    = False
+        self.commands    = Dummy(self.name)
+        self.paths       = []
         self.post_start_hook = []
         self.pre_start_hook  = []
         self.fathers         = []
@@ -253,7 +233,7 @@ class Base(object):
         for d in self.descendants:
             print "	%s (%s)" % (str(d), d.name)
             print "		with ancestors %s (%s)" % \
-                (str(d.ancestors), str(map(lambda x:x.name, d.ancestors)))
+                (str(d.paths), str(map(lambda x:zip(x), d.paths)))
         print "<<< DESCENDANTS OF %s (%s)" % (self ,self.name)
 
     def _get_parent(self):
@@ -286,6 +266,12 @@ class Base(object):
                         "We got a cycle in the tree of dependances! %s appears twice." % \
                             parent.name)
                 self.descendants.add(parent)
+        for cpt, descendant in enumerate(self.descendants):
+            self.paths.append([descendant] + descendant.ancestors)
+        if len(self.paths) == 0:
+            self.paths = [[self]]
+        print "MY PATH IS: (%s)" % self
+        print "	%s " % self.paths
             
     def set_factory(self, factory):
         self._factory = factory
@@ -343,27 +329,16 @@ class Base(object):
                 if quick:
                     root_name += '_quick'
                 # TODO: support multi-vms definitions
-                for descendant in root.descendants:
-                    nbr_of_chains += 1
-                    # with this structure I do not need the recursion
-                    # anymore.  A for loop will do.  I know the snapper
-                    # right from the start, and the last element of the
-                    # chain.  Easier code :)  I still need to populate vm
-                    # to make the Command class and the Download functions
-                    # happy.  Will change them later to avoid recursion
-                    # altogether.
-                    
-                    print "STARTING FROM %s" % descendant
-                    b = ThisBuilder(root = root, descendant = descendant, quick = quick)
+                print "STARTING FROM %s" % root
+                for one_path in root.paths:
+                    b = ThisBuilder(root = root, path = one_path, quick = quick)
                     self.builderfactory.add_builder(b)
-
+    
                     path = b.get_path()
                     current_factory_name = b.get_factory_name()
-
+    
                     current_factory = b.get_factory()
-
-#                    factories[root_name].update({current_factory_name : current_factory})
-
+    
                     b.update_vm()
                     b.update_factory()
                     # now we can start, and the behaviour will be ok.
@@ -375,7 +350,7 @@ class Base(object):
                         snapper.addSetPropertyTF(
                             command = snapper.commands.snap_exists(root.name),
                             property = root.name)
-    
+                    nbr_of_chains += 1
                     level = 1
                     last  = len(path)
                     for element in path:
@@ -413,19 +388,20 @@ class Base(object):
                         if level == last and snapper:
                             # If I'm the caller (last step) and I've got a snapper, so
                             # revert to it.
+                            print "DEBUG: REVERTING TO %s for %s" % (element.name, element)
                             snapper.addRevertToSnap(element.name, assume_exists = True)
     
                         if not quick and snapper:
                             # Take the snap if necessary at the end of the setup
                             snapper.addTakeSnap(element.name)
-
+    
                         # stats
                         if snapper != element:
                             nbr_of_steps += element.nbr_of_steps
                             element.nbr_of_steps = 0
                         level += 1
-                    nbr_of_steps += snapper.nbr_of_steps
-                    snapper.nbr_of_steps = 0
+                nbr_of_steps += snapper.nbr_of_steps
+                snapper.nbr_of_steps = 0
         print "CREATED %d chains with %d elements composed of %d steps" % \
             (nbr_of_chains, nbr_of_elements, nbr_of_steps)
         import pprint
@@ -578,7 +554,6 @@ class Base(object):
     def addDownloadGitDir(self, repo_url = '', dest_dir = '', mode='copy',
                           use_new = False, as_root = False, **kwargs):
         """ Download a dir a Git(+patch) repository.  Support any number of underlying VM """
-        print "ADDING download git"
         self._addDownloadGitDir(repo_url, dest_dir, mode, use_new, as_root, **kwargs)
 
 
