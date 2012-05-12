@@ -57,10 +57,16 @@ class VirtEnv(Base):
             description     = 'Installing pre-pkgs')
         self.addCommandIfBasic(
             command = ['bash', '-c'] +[
-            ' '.join(['sudo', 'python', '<',
-                      '<(curl -s http://peak.telecommunity.com/dist/ez_setup.py);',
-                      'sudo', 'easy_install', 'virtualenv', ';',
-                      'virtualenv', '--no-site-packages', self.env]),],
+                ' '.join(['sudo', 'python', '<', 
+                          '<(curl -s http://peak.telecommunity.com/dist/ez_setup.py);',
+                          'sudo', 'easy_install', 'virtualenv', ';',
+                          'virtualenv', '--no-site-packages', self.env, '|| exit 1 ;',
+                          # make sqlite module works in freebsd, and
+                          # no harm for other distribution
+                          '( [ -e /usr/local/lib/python2.7/site-packages/_sqlite3.so ] && ' + \
+                          'ln -s ' + \
+                          '/usr/local/lib/python2.7/site-packages/_sqlite3.so '+\
+                          self.env + '/lib/python2.7/ ) ' + '|| true']),],
             property_name = self.name,
             description = 'Installing VirtualEnv',
             descriptionDone = 'VirtualEnv')
