@@ -4,7 +4,12 @@
 *.sqlite
 *.sample
 *.hostname
-test/*/master/public_html/*
-test/*/master/runtests/*
-test/*/slave/runtests/*
-test/*/master/gitpoller-workdir/
+*.pyc
+*.core
+slave/
+*/*/*/master/*
+!*/*/*/master/master.cfg
+!*/*/*/master/buildbot.tac
+*/*/master/*
+!*/*/master/master.cfg
+!*/*/master/buildbot.tac
