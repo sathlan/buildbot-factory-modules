@@ -26,4 +26,7 @@ setup(
         'Intended Audience :: Developers',
         'Operating System :: Unix',
         'Programming Language :: Python :: 2.7',
-        'Topic :: Software Development :: Testing',])
+        'Topic :: Software Development :: Testing',],
+    install_requires = [
+        'buildbot == 0.8.5',
+    ])
