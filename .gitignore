@@ -6,6 +6,9 @@
 *.hostname
 *.pyc
 *.core
+*egg*/
+build/
+dist/
 slave/
 */*/*/master/*
 !*/*/*/master/master.cfg

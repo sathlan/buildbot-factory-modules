@@ -28,5 +28,8 @@ setup(
         'Programming Language :: Python :: 2.7',
         'Topic :: Software Development :: Testing',],
     install_requires = [
+        'buildbot == 0.8.5',
         'nose == 1.1.2',
-    ])
+    ],
+    test_suite='nose.collector',)
+
