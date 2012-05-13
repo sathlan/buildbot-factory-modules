@@ -11,7 +11,7 @@ from buildbot.steps.source import Git
 import types
 
 class VirtualEnvCommands(Commands):
-    def __init__(self, dir='myenv', gemset='', vm=None):
+    def __init__(self, dir='myenv', vm=None):
         Commands.__init__(self,vm)
         self.dir = dir
 
