@@ -346,7 +346,7 @@ class Base(object):
                     if path[0].can_snap:
                         snapper = path[0]
     
-                    if not quick:
+                    if not quick and snapper:
                         snapper.addSetPropertyTF(
                             command = snapper.commands.snap_exists(root.name),
                             property = root.name)
@@ -400,8 +400,9 @@ class Base(object):
                             nbr_of_steps += element.nbr_of_steps
                             element.nbr_of_steps = 0
                         level += 1
-                nbr_of_steps += snapper.nbr_of_steps
-                snapper.nbr_of_steps = 0
+                if snapper:
+                    nbr_of_steps += snapper.nbr_of_steps
+                    snapper.nbr_of_steps = 0
         print "CREATED %d chains with %d elements composed of %d steps" % \
             (nbr_of_chains, nbr_of_elements, nbr_of_steps)
         import pprint
