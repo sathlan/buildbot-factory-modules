@@ -127,7 +127,7 @@ class BuilderFactory(object):
         for caller in self._callers:
             for path in caller.paths:
                 print "	DESCENDANTS of %s are %s" % (caller, path)
-                if set(path[:-1]):
+                if set(path[:-1]) or len(path) == 1:
                     # we don't want union with empty set
                     with_parent |= set(path[:-1])
                     roots.add(path[-1])
