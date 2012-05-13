@@ -126,12 +126,12 @@ class BuilderFactory(object):
         print "The caller of %s are %s" % (self, self._callers)
         for caller in self._callers:
             for path in caller.paths:
-                print "HAVING another : %s" % (caller)
                 print "	DESCENDANTS of %s are %s" % (caller, path)
                 if set(path[:-1]):
                     # we don't want union with empty set
                     with_parent |= set(path[:-1])
                     roots.add(path[-1])
+                    print "		Adding %s as root" % path[-1]
                 roots -= with_parent
         return roots
 
@@ -311,7 +311,7 @@ class Base(object):
             raise MyFactoryError("Start has to be called only one time.")
 
         if self not in self.builderfactory.roots():
-            raise MyFactoryError("Must be called from the last element in the chain %snot %s" \
+            raise MyFactoryError("Must be called from the last element in the chain \"%s\"not %s" \
                                      % ('or '.join(
                         map(lambda x: x.name + ' ', self.builderfactory.roots())), 
                                         self.name))
