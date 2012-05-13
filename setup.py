@@ -30,6 +30,8 @@ setup(
     install_requires = [
         'buildbot == 0.8.5',
         'nose == 1.1.2',
+        'flexmock == 0.9.1',
     ],
+    zip_safe = True,
     test_suite='nose.collector',)
 
