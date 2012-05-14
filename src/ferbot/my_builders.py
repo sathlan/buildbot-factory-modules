@@ -12,6 +12,8 @@ class ThisBuilder(object):
         self.quick      = quick
         self.factory    = BuildFactory()
 
+        self.factory_name = self._set_factory_name()
+        self.name       = self._set_builder_name()
 
     def get_quick(self):
         if self.quick:
@@ -22,14 +24,22 @@ class ThisBuilder(object):
     def get_path(self):
         return self.path
 
-    def get_factory_name(self):
+    def _set_factory_name(self):
         obj = self.path[0]
-        self.factory_name = obj.name
+        print "FACTORY NAME %s" % obj.name
+        return obj.name
+
+    def get_factory_name(self):
         return self.factory_name
 
+    def _set_builder_name(self):
+        name = self.get_path()[-1].name + '@' + self.get_factory_name() + self.get_quick()
+        if len(self.get_path()) == 1:
+            name = self.get_path()[-1].name + self.get_quick()
+        return name
+
     def get_builder_name(self):
-        print "DEBUG: builder name %s" %  self.get_path()[-1].name + '@' + self.get_factory_name() + self.get_quick()
-        return self.get_path()[-1].name + '@' + self.get_factory_name() + self.get_quick()
+        return self.name
 
     def get_factory(self):
         return self.factory

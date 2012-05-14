@@ -44,7 +44,10 @@ class Vm(Base):
                  machine = False,
                  **kwargs):
         self.vm                = vm
-        self.name              = self._make_uniq_initial_name()
+        if 'force_new_builders' in kwargs:
+            self.name              = self._make_uniq_initial_name(force_new_builders = True)
+        else:
+            self.name              = self._make_uniq_initial_name()
         Base.__init__(self, vm = vm, **kwargs)
         self.is_vm             = True
         self.root_vm_dir       = root_vm_dir
@@ -207,10 +210,13 @@ class Vm(Base):
             else:
                 self.addStep(GitOld(repourl=repo_url, mode=mode, workdir = dest_dir, **kwargs))
 
-    def _make_uniq_initial_name(self):
+    def _make_uniq_initial_name(self, **kwargs):
         """
         Make a unique L{name} for the vm from L{boxname}.
         """
-        name = MyName().uniq(self.boxname)
+        if 'force_new_builders' in kwargs:
+            name = MyName(force_new_builders = True).uniq(self.boxname)
+        else:
+            name = MyName().uniq(self.boxname)
         print "MAKING NAME %s for %s" % (name, self)
         return name

@@ -45,8 +45,9 @@ class MyName(object):
     _names    = set([])
     def __new__(laClasse, *args, **kwargs): 
         "méthode de construction standard en Python"
-        if laClasse._instance is None:
-            laClasse._instance = object.__new__(laClasse, *args, **kwargs)
+        if laClasse._instance is None or 'force_new_builders' in kwargs:
+            laClasse._names = set([])
+            laClasse._instance = object.__new__(laClasse, *args)
         return laClasse._instance
 
     def uniq(self, name):
@@ -77,11 +78,17 @@ class BuilderFactory(object):
     _builders  = []
     def __new__(laClasse, *args, **kwargs): 
         "méthode de construction standard en Python"
-        if laClasse._instance is None:
+        if laClasse._instance is None or 'force_new_builders' in kwargs:
+            laClasse._has_started = False
+            laClasse._callers = []
+            laClasse._trees_bag = []
+            laClasse._builders = []
             laClasse._instance = object.__new__(laClasse, *args, **kwargs)
+        if 'force_new_builders' in kwargs:
+            print "FORCING NEW"
         return laClasse._instance
 
-    def __init__(self, caller):
+    def __init__(self, caller, **kwargs):
         BuilderFactory._callers += [caller]
         self.callers     = BuilderFactory._callers
         self.max         = caller
@@ -109,7 +116,10 @@ class BuilderFactory(object):
                 yield root
 
     def has_started(self):
-        started = BuilderFactory._has_started
+        if BuilderFactory._has_started:
+            started = True
+        else:
+            started = False
         BuilderFactory._has_started = True
         return started
 
@@ -186,7 +196,7 @@ class Base(object):
     inherited by all modules.  If the class is to be a virtual
     machine, L{Vm} should be inherited instead.
     """
-    def __init__(self, vm = None, vms = [], factory = ''):
+    def __init__(self, vm = None, vms = [], factory = '', **kwargs):
         self._factory = factory
 
         if vm != None or vms != []:
@@ -212,7 +222,11 @@ class Base(object):
         #: keep track of all the final leave from here
         self.descendants     = set([])
         self.vms             = vms
-        self.builderfactory    = BuilderFactory(self)
+        if 'force_new_builders' in kwargs:
+            self.builderfactory    = BuilderFactory(self, force_new_builders = True)
+        else:
+            self.builderfactory    = BuilderFactory(self)
+
         #: just a counter for statistics
         self.nbr_of_steps    = 0
         try:
