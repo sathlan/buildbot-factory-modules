@@ -212,7 +212,7 @@ fi
 
         self.addCommandIf(
             command         = ['bash', '-c',
-                ' '.join(['gem', 'list', '-i', 'vagrant', '-v', "'"+VAGRANT_VERSION+"'", '||',
+                ' '.join(['sudo', 'gem', 'list', '-i', 'vagrant', '-v', "'"+VAGRANT_VERSION+"'", '||',
                           'sudo', 'gem', 'install', 'vagrant', '-v', "'"+VAGRANT_VERSION+"'"])],
             property_name   = self.property_exists,
             description     = 'Installing Vagrant',
