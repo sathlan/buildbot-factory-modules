@@ -36,6 +36,7 @@ class Commands():
     1. user command should not use double quote X{"}, but single quote X{'}
     2. commands inside command (like using backquote) are executed on the slave not the vm.
     """
+                                                                         # "'
     def __init__(self, vm = None):
         self.vm = vm
         if vm:
