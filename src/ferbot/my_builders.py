@@ -11,7 +11,7 @@ class ThisBuilder(object):
         print "	Got this path : %s" % self.path
         self.quick      = quick
         self.factory    = BuildFactory()
-
+        self.steps      = []
         self.factory_name = self._set_factory_name()
         self.name       = self._set_builder_name()
 
@@ -60,3 +60,9 @@ class ThisBuilder(object):
             # set element.factory to factories[current_factory]
             element.factory = self.factory
             element.init_command()
+
+    def addStep(self, step):
+        self.steps.append(step)
+
+    def get_steps(self):
+        return self.steps

@@ -94,6 +94,7 @@ class BuilderFactory(object):
         self.max         = caller
         self.builders    = BuilderFactory._builders
         self.__func      = ''
+        self.all_steps   = {}
 
     def add_builder(self, builder):
         BuilderFactory._builders.append(builder)
@@ -189,6 +190,27 @@ class BuilderFactory(object):
                 destination = to
             print "BUILDER %s and ROOT %s and func %s (%s)" % (builder, destination, self.__func, to)
             getattr(destination, self.__func)(*args,**kwargs)
+
+    def save_steps(self, builder):
+        ''' Save the step in a dict from the builder '''
+        b_name = builder.get_builder_name()
+        self.all_steps.update({ b_name : builder.get_steps() })
+
+    def get_all_steps(self):
+        return self.all_steps
+
+    def get_all_steps_command(self):
+        builds   = {}
+        for (b,steps) in self.all_steps.iteritems():
+            commands = []
+            for s in steps:
+                try:
+                    commands.append(s.command)
+                except:
+                    commands.append(s)
+            builds.update({b : commands})
+        return builds
+        
 
 class Base(object):
     """
@@ -294,6 +316,12 @@ class Base(object):
         return self._factory
 
     factory = property(fget = get_factory, fset = set_factory)
+
+    def get_current_builder(self):
+        builders = []
+        for b in self.builderfactory.get_builders():
+            builders.append(b)
+        return builders[-1]
 
     def start(self):
         """
@@ -417,6 +445,8 @@ class Base(object):
                 if snapper:
                     nbr_of_steps += snapper.nbr_of_steps
                     snapper.nbr_of_steps = 0
+
+                self.builderfactory.save_steps(b)
         print "CREATED %d chains with %d elements composed of %d steps" % \
             (nbr_of_chains, nbr_of_elements, nbr_of_steps)
         import pprint
@@ -486,6 +516,7 @@ class Base(object):
 
         self.nbr_of_steps += 1
         print "		STEP: %s (%s)" % (step, self.factory)
+        self.get_current_builder().addStep(step) # keep a copy of the steps for debug
         self.factory.addStep(step)
 
     def addDownloadFile(self, src_file, dst_file, workdir = '/', as_root = False):
