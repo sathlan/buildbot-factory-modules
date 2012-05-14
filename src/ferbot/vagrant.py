@@ -211,9 +211,9 @@ fi
             descriptionDone = 'VirtualBox Done')
 
         self.addCommandIf(
-            command         = [
-                'gem', 'list', '-i', 'vagrant', '-v', VAGRANT_VERSION, '||',
-                'sudo', 'gem', 'install', 'vagrant', '-v', VAGRANT_VERSION],
+            command         = ['bash', '-c',
+                ' '.join(['gem', 'list', '-i', 'vagrant', '-v', "'"+VAGRANT_VERSION+"'", '||',
+                          'sudo', 'gem', 'install', 'vagrant', '-v', "'"+VAGRANT_VERSION+"'"]),
             property_name   = self.property_exists,
             description     = 'Installing Vagrant',
             descriptionDone = 'Vagrant installed')
