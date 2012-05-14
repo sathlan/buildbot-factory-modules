@@ -449,6 +449,9 @@ class Base(object):
                 self.builderfactory.save_steps(b)
         print "CREATED %d chains with %d elements composed of %d steps" % \
             (nbr_of_chains, nbr_of_elements, nbr_of_steps)
+        self.stats = {'nbr_of_chains'   : nbr_of_chains, 
+                      'nbr_of_elements' : nbr_of_elements,
+                      'nbr_of_steps'    : nbr_of_steps }
         import pprint
         pp = pprint.PrettyPrinter()
         pp.pprint(factories)
