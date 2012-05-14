@@ -344,7 +344,7 @@ class Base(object):
         """
         # TODO: should return a object to facilitate adding step:
         # check puppet/master.cfg
-        print ">>> ROOTS:"
+        print ">>> ROOTS: (%s)" % self
         for root in self.builderfactory.roots():
             print "	 roots are %s (%s)" % (root, root.name)
         print "<<< ROOTS:"
