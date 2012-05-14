@@ -353,10 +353,11 @@ class Base(object):
             raise MyFactoryError("Start has to be called only one time.")
 
         if self not in self.builderfactory.roots():
-            raise MyFactoryError("Must be called from the last element in the chain \"%s\"not %s" \
-                                     % ('or '.join(
-                        map(lambda x: x.name + ' ', self.builderfactory.roots())), 
-                                        self.name))
+            raise MyFactoryError(
+                "Must be called from the last element in the chain \"%s\"not %s" % \
+                ('or '.join(
+                    map(lambda x: str(x) + ' ', self.builderfactory.roots())),
+                 str(self)))
         # We are good to go.
         factories    = {}
         nbr_of_chains   = 0
